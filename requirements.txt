@@ -49,4 +49,4 @@ nltk==3.8.1
 evaluate
 vllm==0.5.3.post1
 rouge_score
-minference
+#minference
