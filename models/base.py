@@ -344,6 +344,7 @@ class LLM:
         generated_ids = torch.LongTensor(generated_ids).t().tolist()
 
         if benchmark == True:
-            return self.decode(generated_ids, skip_special_tokens=True), self.batch_size * n / (end - start)
+            total_generated_tokens = sum(len(seq) for seq in generated_ids)
+            return self.decode(generated_ids, skip_special_tokens=True), total_generated_tokens / (end - start), total_generated_tokens
 
         return self.decode(generated_ids, skip_special_tokens=True)
