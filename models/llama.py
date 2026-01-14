@@ -26,7 +26,12 @@ from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 transformers.logging.set_verbosity_error()
 
 import vllm
-from minference.configs.model2path import MODEL2PATH
+
+# Optional import for minference
+try:
+    from minference.configs.model2path import MODEL2PATH
+except ImportError:
+    MODEL2PATH = None
 
 from .tensor_op import layer_norm, apply_rotary_pos_emb, apply_rotary_pos_emb_single, apply_rotary_pos_emb_cuda
 from .prompt_template import Templates, Chat_Templates, Prefix_Templates
@@ -122,10 +127,10 @@ class Llama(LLM):
         self.init_kv_cache(sparse_budget, rank, chunk_size, self.config)
 
         if self.minference:
-            import json
-            self.minference_parttern = []
-            for layer_idx in range(self.num_layers):
-                self.minference_parttern.append({int(ii): jj for ii, jj in json.load(open(MODEL2PATH[self.model_name]))[layer_idx].items()})
+                import json
+                self.minference_parttern = []
+                for layer_idx in range(self.num_layers):
+                    self.minference_parttern.append({int(ii): jj for ii, jj in json.load(open(MODEL2PATH[self.model_name]))[layer_idx].items()})
 
 
     def _set_cos_sin_cache(self, inv_freq: torch.Tensor):

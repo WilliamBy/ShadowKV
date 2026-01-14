@@ -16,7 +16,7 @@
 ################################################################################
 
 accelerate
-datasets
+datasets==2.20.0 # pyarrow hotfix
 gcsfs
 matplotlib
 numpy==1.23.2
@@ -49,4 +49,4 @@ nltk==3.8.1
 evaluate
 vllm==0.5.3.post1
 rouge_score
-#minference
+minference==0.1.5 # compatible with transformers 4.43.1

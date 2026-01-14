@@ -25,7 +25,14 @@ import torch
 from torch.nn import functional as F
 
 from flashinfer.norm import rmsnorm
-from minference import vertical_slash_sparse_attention, block_sparse_attention, streaming_forward
+
+# Optional import for minference
+try:
+    from minference import vertical_slash_sparse_attention, block_sparse_attention, streaming_forward
+except ImportError:
+    vertical_slash_sparse_attention = None
+    block_sparse_attention = None
+    streaming_forward = None
 
 from kernels import shadowkv
 

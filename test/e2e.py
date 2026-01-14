@@ -37,8 +37,8 @@ configs = {
         "60k": {
             "sparse_budget": 1024,
             "min_prompt_len": 1024*60,
-            "baseline_bsz": 8,
-            "shadowkv_bsz": 48,
+            "baseline_bsz": 4,
+            "shadowkv_bsz": 24,
         },
         "122k": {
             "sparse_budget": 2048,
@@ -120,6 +120,7 @@ def parse_args() -> Namespace:
     p = ArgumentParser()
     p.add_argument("--model_name", type=str, default="meta-llama/Meta-Llama-3.1-8B-Instruct", choices=["gradientai/Llama-3-8B-Instruct-Gradient-1048k", "meta-llama/Meta-Llama-3.1-8B-Instruct", "01-ai/Yi-9B-200K","THUDM/glm-4-9b-chat-1m"])
     p.add_argument("--datalen", type=str, default="122k", choices=["60k", "122k", "244k"])
+    p.add_argument("--minference", action='store_true', default=False)
 
     return p.parse_args()
 
@@ -139,7 +140,7 @@ if __name__ == '__main__':
 
     ##################### Baseline #####################
     LLM = choose_model_class(model_name)
-    llm = LLM(model_name=model_name, device='cuda:0',  batch_size=baseline_bsz, max_length=min_prompt_len, attn_mode='full', sparse_budget=sparse_budget)
+    llm = LLM(model_name=model_name, device='cuda:0',  batch_size=baseline_bsz, max_length=min_prompt_len, attn_mode='full', sparse_budget=sparse_budget, minference=args.minference)
     dataset = Dataset(dataset_name, llm.tokenizer, 256*1024, 20)
 
     input_ids = torch.cat([dataset[i][0][:, :min_prompt_len] for i in range(llm.batch_size)], dim=0)
@@ -162,7 +163,7 @@ if __name__ == '__main__':
     dataset = Dataset(dataset_name, llm.tokenizer, 256*1024, 100)
 
     input_ids = torch.cat([dataset[i][0][:, :min_prompt_len] for i in range(llm.batch_size)], dim=0)
-    _, throughput_shadowkv = llm.batch_generate(input_ids.to(llm.device), gen_len=100, benchmark=True, temperature=temperature)
+    _, throughput_shadowkv = llm.batch_generate(input_ids.to(llm.device), gen_len=100, benchmark=True, temperature=temperature, minference=args.minference)
     print(colored(f"[ShadowKV] Throughput: {throughput_shadowkv} tokens/s", 'red'))
     
     print(colored(f"Speedup: {throughput_shadowkv / throughput_baseline:.2f}x", 'red'))

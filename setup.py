@@ -27,6 +27,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 
 setup(
     name='shadowkv',
+    packages=[],
     ext_modules=[
         CUDAExtension(
             name='shadowkv',
