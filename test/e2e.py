@@ -15,21 +15,21 @@
 #
 ################################################################################
 
+from models import choose_model_class
+from data.dataset import Dataset
+from argparse import ArgumentParser, Namespace
+from termcolor import colored
+import time
+import gc
+import torch
 import os
 import sys
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 
-import torch
-import gc
-import time
-from termcolor import colored
-from argparse import ArgumentParser, Namespace
 
-from data.dataset import Dataset
 os.chdir(root_dir)
 
-from models import choose_model_class
 
 dataset_name = "ruler/qa_2"
 
@@ -39,7 +39,7 @@ configs = {
             "sparse_budget": 1024,
             "min_prompt_len": 1024*60,
             "baseline_bsz": 3,
-            "shadowkv_bsz": 5,
+            "shadowkv_bsz": 8,
         },
         "122k": {
             "sparse_budget": 2048,
@@ -119,10 +119,13 @@ configs = {
 
 def parse_args() -> Namespace:
     p = ArgumentParser()
-    p.add_argument("--model_name", type=str, default="meta-llama/Meta-Llama-3.1-8B-Instruct", choices=["gradientai/Llama-3-8B-Instruct-Gradient-1048k", "meta-llama/Meta-Llama-3.1-8B-Instruct", "01-ai/Yi-9B-200K","THUDM/glm-4-9b-chat-1m"])
-    p.add_argument("--datalen", type=str, default="122k", choices=["60k", "122k", "244k"])
+    p.add_argument("--model_name", type=str, default="meta-llama/Meta-Llama-3.1-8B-Instruct", choices=[
+                   "gradientai/Llama-3-8B-Instruct-Gradient-1048k", "meta-llama/Meta-Llama-3.1-8B-Instruct", "01-ai/Yi-9B-200K", "THUDM/glm-4-9b-chat-1m"])
+    p.add_argument("--datalen", type=str, default="122k",
+                   choices=["60k", "122k", "244k"])
 
     return p.parse_args()
+
 
 if __name__ == '__main__':
 
@@ -137,26 +140,48 @@ if __name__ == '__main__':
     shadowkv_bsz = configs[model_name][length]["shadowkv_bsz"]
     sparse_budget = configs[model_name][length]["sparse_budget"]
 
-
     ##################### Baseline #####################
     LLM = choose_model_class(model_name)
-    llm = LLM(model_name=model_name, device='cuda:0',  batch_size=baseline_bsz, max_length=min_prompt_len, attn_mode='full', sparse_budget=sparse_budget)
+    llm = LLM(model_name=model_name, device='cuda:0',  batch_size=baseline_bsz,
+              max_length=min_prompt_len, attn_mode='full', sparse_budget=sparse_budget)
+    torch.cuda.synchronize(llm.device)
+    mem_after_load_baseline = torch.cuda.memory_allocated(
+        llm.device) / (1024 ** 3)
     dataset = Dataset(dataset_name, llm.tokenizer, 256*1024, 20)
 
-    input_ids = torch.cat([dataset[i][0][:, :min_prompt_len] for i in range(llm.batch_size)], dim=0)
+    input_ids = torch.cat([dataset[i][0][:, :min_prompt_len]
+                          for i in range(llm.batch_size)], dim=0)
 
     assert input_ids.shape[-1] == min_prompt_len
 
     # Reset CUDA peak memory stats before baseline generation
     torch.cuda.reset_peak_memory_stats(llm.device)
     start_time_baseline = time.time()
-    _, throughput_baseline = llm.batch_generate(input_ids.to(llm.device), gen_len=100, benchmark=True, temperature=temperature)
+    _, throughput_baseline, generated_tokens_baseline = llm.batch_generate(
+        input_ids.to(llm.device), gen_len=100, benchmark=True, temperature=temperature)
     end_time_baseline = time.time()
     torch.cuda.synchronize(llm.device)
-    peak_mem_baseline = torch.cuda.max_memory_allocated(llm.device) / (1024 ** 3)
-    print(colored(f"[Baseline] Throughput: {throughput_baseline} tokens/s", 'red'))
-    print(colored(f"[Baseline] Peak CUDA memory on {llm.device}: {peak_mem_baseline:.2f} GB", 'yellow'))
-    print(colored(f"[Baseline] Elapsed time: {end_time_baseline - start_time_baseline:.3f} s", 'yellow'))
+    peak_mem_baseline = torch.cuda.max_memory_allocated(
+        llm.device) / (1024 ** 3)
+    mem_increment_baseline = peak_mem_baseline - mem_after_load_baseline
+    input_tokens_baseline = input_ids.shape[0] * input_ids.shape[1]
+    total_tokens_baseline = input_tokens_baseline + generated_tokens_baseline
+    mem_per_batch_baseline = mem_increment_baseline / baseline_bsz
+    mem_per_token_baseline = mem_increment_baseline / total_tokens_baseline
+    print(colored(
+        f"[Baseline] Memory after model loading on {llm.device}: {mem_after_load_baseline:.2f} GB", 'cyan'))
+    print(
+        colored(f"[Baseline] Throughput: {throughput_baseline} tokens/s", 'red'))
+    print(colored(
+        f"[Baseline] Peak CUDA memory on {llm.device}: {peak_mem_baseline:.2f} GB", 'yellow'))
+    print(colored(
+        f"[Baseline] Memory increment: {mem_increment_baseline:.2f} GB", 'yellow'))
+    print(colored(
+        f"[Baseline] Memory per batch: {mem_per_batch_baseline:.2f} GB", 'yellow'))
+    print(colored(
+        f"[Baseline] Memory per token: {mem_per_token_baseline:.4f} GB", 'yellow'))
+    print(colored(
+        f"[Baseline] Elapsed time: {end_time_baseline - start_time_baseline:.3f} s", 'yellow'))
 
     del llm.kv_cache
     del llm
@@ -167,19 +192,43 @@ if __name__ == '__main__':
 
     ##################### ShadowKV #####################
 
-    llm = LLM(model_name=model_name, device='cuda:0',  batch_size=shadowkv_bsz, max_length=min_prompt_len, attn_mode='shadowkv_cpu', sparse_budget=sparse_budget)
+    llm = LLM(model_name=model_name, device='cuda:0',  batch_size=shadowkv_bsz,
+              max_length=min_prompt_len, attn_mode='shadowkv_cpu', sparse_budget=sparse_budget)
+    torch.cuda.synchronize(llm.device)
+    mem_after_load_shadowkv = torch.cuda.memory_allocated(
+        llm.device) / (1024 ** 3)
     dataset = Dataset(dataset_name, llm.tokenizer, 256*1024, 100)
 
-    input_ids = torch.cat([dataset[i][0][:, :min_prompt_len] for i in range(llm.batch_size)], dim=0)
+    input_ids = torch.cat([dataset[i][0][:, :min_prompt_len]
+                          for i in range(llm.batch_size)], dim=0)
     # Reset CUDA peak memory stats before shadowkv generation
     torch.cuda.reset_peak_memory_stats(llm.device)
     start_time_shadowkv = time.time()
-    _, throughput_shadowkv = llm.batch_generate(input_ids.to(llm.device), gen_len=100, benchmark=True, temperature=temperature)
+    _, throughput_shadowkv, generated_tokens_shadowkv = llm.batch_generate(
+        input_ids.to(llm.device), gen_len=100, benchmark=True, temperature=temperature)
     end_time_shadowkv = time.time()
     torch.cuda.synchronize(llm.device)
-    peak_mem_shadowkv = torch.cuda.max_memory_allocated(llm.device) / (1024 ** 3)
-    print(colored(f"[ShadowKV] Throughput: {throughput_shadowkv} tokens/s", 'red'))
-    print(colored(f"[ShadowKV] Peak CUDA memory on {llm.device}: {peak_mem_shadowkv:.2f} GB", 'yellow'))
-    print(colored(f"[ShadowKV] Elapsed time: {end_time_shadowkv - start_time_shadowkv:.3f} s", 'yellow'))
-    
-    print(colored(f"Speedup: {throughput_shadowkv / throughput_baseline:.2f}x", 'red'))
+    peak_mem_shadowkv = torch.cuda.max_memory_allocated(
+        llm.device) / (1024 ** 3)
+    mem_increment_shadowkv = peak_mem_shadowkv - mem_after_load_shadowkv
+    input_tokens_shadowkv = input_ids.shape[0] * input_ids.shape[1]
+    total_tokens_shadowkv = input_tokens_shadowkv + generated_tokens_shadowkv
+    mem_per_batch_shadowkv = mem_increment_shadowkv / shadowkv_bsz
+    mem_per_token_shadowkv = mem_increment_shadowkv / total_tokens_shadowkv
+    print(colored(
+        f"[ShadowKV] Memory after model loading on {llm.device}: {mem_after_load_shadowkv:.2f} GB", 'cyan'))
+    print(
+        colored(f"[ShadowKV] Throughput: {throughput_shadowkv} tokens/s", 'red'))
+    print(colored(
+        f"[ShadowKV] Peak CUDA memory on {llm.device}: {peak_mem_shadowkv:.2f} GB", 'yellow'))
+    print(colored(
+        f"[ShadowKV] Memory increment: {mem_increment_shadowkv:.2f} GB", 'yellow'))
+    print(colored(
+        f"[ShadowKV] Memory per batch: {mem_per_batch_shadowkv:.2f} GB", 'yellow'))
+    print(colored(
+        f"[ShadowKV] Memory per token: {mem_per_token_shadowkv:.4f} GB", 'yellow'))
+    print(colored(
+        f"[ShadowKV] Elapsed time: {end_time_shadowkv - start_time_shadowkv:.3f} s", 'yellow'))
+
+    print(
+        colored(f"Speedup: {throughput_shadowkv / throughput_baseline:.2f}x", 'red'))
