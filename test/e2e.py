@@ -15,8 +15,6 @@
 #
 ################################################################################
 
-from models import choose_model_class
-from data.dataset import Dataset
 from argparse import ArgumentParser, Namespace
 from termcolor import colored
 import time
@@ -27,6 +25,8 @@ import sys
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 
+from models import choose_model_class
+from data.dataset import Dataset
 
 os.chdir(root_dir)
 
@@ -38,8 +38,8 @@ configs = {
         "60k": {
             "sparse_budget": 1024,
             "min_prompt_len": 1024*60,
-            "baseline_bsz": 3,
-            "shadowkv_bsz": 8,
+            "baseline_bsz": 1,
+            "shadowkv_bsz": 1,
         },
         "122k": {
             "sparse_budget": 2048,
