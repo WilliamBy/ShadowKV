@@ -259,7 +259,6 @@ class ShadowKVCache:
         landmark_candidates = key_states_roped_ctx.mean(dim=-2) # [bsz, kv_heads, chunks, head_dim]
 
         # compute the JS divergence between the landmark_candidates and the key_states_roped in local
-        print(colored('using JS divergence', 'red'))
         j1 = F.softmax(landmark_candidates, dim=-1)
         j2 = F.softmax(key_states_roped[:,:, -self.chunks:], dim=-1)
         cos_sim = square_root_js_divergence(j1, j2)

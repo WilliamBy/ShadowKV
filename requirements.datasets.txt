@@ -1,4 +1,0 @@
-wheel
-Cython
-youtokentome
-nemo_toolkit[all]==1.23

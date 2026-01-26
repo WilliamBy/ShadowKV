@@ -34,7 +34,26 @@ os.chdir(root_dir)
 dataset_name = "ruler/qa_2"
 
 configs = {
+    # 1.7% sparsity
     "gradientai/Llama-3-8B-Instruct-Gradient-1048k": {
+        "12k": {
+            "sparse_budget": 256,
+            "min_prompt_len": 1024*12,
+            "baseline_bsz": 1,
+            "shadowkv_bsz": 1,
+        },
+        "28k": {
+            "sparse_budget": 512,
+            "min_prompt_len": 1024*28,
+            "baseline_bsz": 1,
+            "shadowkv_bsz": 1,
+        },
+        "44k": {
+            "sparse_budget": 768,
+            "min_prompt_len": 1024*44,
+            "baseline_bsz": 1,
+            "shadowkv_bsz": 1,
+        },
         "60k": {
             "sparse_budget": 1024,
             "min_prompt_len": 1024*60,
@@ -122,7 +141,8 @@ def parse_args() -> Namespace:
     p.add_argument("--model_name", type=str, default="meta-llama/Meta-Llama-3.1-8B-Instruct", choices=[
                    "gradientai/Llama-3-8B-Instruct-Gradient-1048k", "meta-llama/Meta-Llama-3.1-8B-Instruct", "01-ai/Yi-9B-200K", "THUDM/glm-4-9b-chat-1m"])
     p.add_argument("--datalen", type=str, default="122k",
-                   choices=["60k", "122k", "244k"])
+                   choices=["12k", "44k", "28k", "60k", "122k", "244k"])
+    p.add_argument("--device", type=int, default="0", help="gpu device to use")
 
     return p.parse_args()
 
@@ -133,6 +153,7 @@ if __name__ == '__main__':
 
     model_name = args.model_name
     length = args.datalen
+    device = args.device
 
     min_prompt_len = configs[model_name][length]["min_prompt_len"]
     temperature = 0.6
@@ -142,7 +163,7 @@ if __name__ == '__main__':
 
     ##################### Baseline #####################
     LLM = choose_model_class(model_name)
-    llm = LLM(model_name=model_name, device='cuda:0',  batch_size=baseline_bsz,
+    llm = LLM(model_name=model_name, device=f'cuda:{device}',
               max_length=min_prompt_len, attn_mode='full', sparse_budget=sparse_budget)
     torch.cuda.synchronize(llm.device)
     mem_after_load_baseline = torch.cuda.memory_allocated(
@@ -192,7 +213,7 @@ if __name__ == '__main__':
 
     ##################### ShadowKV #####################
 
-    llm = LLM(model_name=model_name, device='cuda:0',  batch_size=shadowkv_bsz,
+    llm = LLM(model_name=model_name, device=f'cuda:{device}',  batch_size=shadowkv_bsz,
               max_length=min_prompt_len, attn_mode='shadowkv_cpu', sparse_budget=sparse_budget)
     torch.cuda.synchronize(llm.device)
     mem_after_load_shadowkv = torch.cuda.memory_allocated(

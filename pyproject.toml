@@ -1,0 +1,64 @@
+[project]
+name = "shadowkv"
+version = "0.1.0"
+description = "sparse decoding"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "accelerate>=1.12.0",
+    "datasets==2.20.0",
+    "evaluate>=0.4.6",
+    "flash-attn",
+    "fuzzywuzzy>=0.18.0",
+    "gcsfs>=2024.5.0",
+    "huggingface-hub==0.23.3",
+    "jieba>=0.42.1",
+    "matplotlib>=3.10.8",
+    "minference==0.1.5",
+    "ninja>=1.13.0",
+    "nltk==3.8.1",
+    "numpy==1.23.2",
+    "openai>=2.15.0",
+    "packaging>=26.0",
+    "pandas>=2.1.0",
+    "protobuf>=6.33.4",
+    "rouge>=1.0.1",
+    "rouge-score>=0.1.2",
+    "safetensors>=0.7.0",
+    "scikit-learn>=1.7.2",
+    "scipy>=1.13.1",
+    "seaborn>=0.13.2",
+    "sentencepiece>=0.2.1",
+    "setuptools>=80.10.1",
+    "sympy>=1.14.0",
+    "tabulate>=0.9.0",
+    "tenacity>=9.1.2",
+    "termcolor>=3.3.0",
+    "tiktoken>=0.12.0",
+    "torch==2.3.1",
+    "tqdm>=4.67.1",
+    "transformers==4.43.1",
+    "vllm==0.5.3.post1",
+    "wandb>=0.24.0",
+    "wonderwords>=3.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "debugpy>=1.8.19",
+]
+ruler = [
+    "cython>=3.2.4",
+    "nemo-toolkit[all]==1.23",
+    "wheel>=0.46.3",
+    "youtokentome>=1.0.6",
+]
+
+[tool.uv]
+prerelease="allow"
+
+[tool.uv.extra-build-dependencies]
+youtokentome = ["Cython"]
+
+[tool.uv.sources]
+flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.3cxx11abiFALSE-cp310-cp310-linux_x86_64.whl" }
