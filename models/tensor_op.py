@@ -300,3 +300,9 @@ def sample_token(logits: torch.Tensor, temperature=0, top_k=50, top_p=0.9):
         token = sample(norm_logits(logits, temperature=temperature, top_p=top_p, top_k=top_k))
     
     return token
+
+def square_root_js_divergence(p: torch.Tensor, q: torch.Tensor):
+    m = (p + q) / 2
+    return torch.sqrt(
+        0.5 * (p * torch.log(p / m)).sum(-1) + 0.5 * (q * torch.log(q / m)).sum(-1)
+    )

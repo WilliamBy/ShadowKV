@@ -1,0 +1,51 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": "${command:pickArgs}"
+        },
+        {
+            "name": "ShadowKV: eval_acc.py (full)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test/eval_acc.py",
+            "console": "integratedTerminal",
+            "args": "--datalen 16384 --method full --dataset_name \"ruler/niah_single_1,ruler/niah_single_2,ruler/niah_single_3,ruler/niah_multikey_1,ruler/niah_multikey_2,ruler/niah_multiquery,ruler/niah_multivalue,ruler/vt,ruler/fwe,ruler/qa_1,ruler/qa_2\" --model_name \"gradientai/Llama-3-8B-Instruct-Gradient-1048k\"",
+            "justMyCode": false
+        },
+        {
+            "name": "ShadowKV: eval_acc.py (shadowkv)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test/eval_acc.py",
+            "console": "integratedTerminal",
+            "args": "--device 7 --datalen 16384 --method shadowkv --dataset_name \"ruler/niah_single_1,ruler/niah_single_2,ruler/niah_single_3,ruler/niah_multikey_1,ruler/niah_multikey_2,ruler/niah_multiquery,ruler/niah_multivalue,ruler/vt,ruler/fwe,ruler/qa_1,ruler/qa_2\" --model_name \"gradientai/Llama-3-8B-Instruct-Gradient-1048k\" --sparse_budget 2048 --rank 160 --chunk_size 8",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Attach to Process",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Attach by Process ID",
+            "type": "debugpy",
+            "request": "attach",
+            "processId": "${command:pickProcess}",
+            "justMyCode": false
+        }
+    ]
+}

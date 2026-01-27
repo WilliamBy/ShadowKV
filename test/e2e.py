@@ -15,8 +15,6 @@
 #
 ################################################################################
 
-from models import choose_model_class
-from data.dataset import Dataset
 from argparse import ArgumentParser, Namespace
 from termcolor import colored
 import time
@@ -27,6 +25,8 @@ import sys
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(root_dir)
 
+from models import choose_model_class
+from data.dataset import Dataset
 
 os.chdir(root_dir)
 
@@ -34,12 +34,31 @@ os.chdir(root_dir)
 dataset_name = "ruler/qa_2"
 
 configs = {
+    # 1.7% sparsity
     "gradientai/Llama-3-8B-Instruct-Gradient-1048k": {
+        "12k": {
+            "sparse_budget": 256,
+            "min_prompt_len": 1024*12,
+            "baseline_bsz": 1,
+            "shadowkv_bsz": 1,
+        },
+        "28k": {
+            "sparse_budget": 512,
+            "min_prompt_len": 1024*28,
+            "baseline_bsz": 1,
+            "shadowkv_bsz": 1,
+        },
+        "44k": {
+            "sparse_budget": 768,
+            "min_prompt_len": 1024*44,
+            "baseline_bsz": 1,
+            "shadowkv_bsz": 1,
+        },
         "60k": {
             "sparse_budget": 1024,
             "min_prompt_len": 1024*60,
-            "baseline_bsz": 3,
-            "shadowkv_bsz": 8,
+            "baseline_bsz": 1,
+            "shadowkv_bsz": 1,
         },
         "122k": {
             "sparse_budget": 2048,
@@ -122,7 +141,8 @@ def parse_args() -> Namespace:
     p.add_argument("--model_name", type=str, default="meta-llama/Meta-Llama-3.1-8B-Instruct", choices=[
                    "gradientai/Llama-3-8B-Instruct-Gradient-1048k", "meta-llama/Meta-Llama-3.1-8B-Instruct", "01-ai/Yi-9B-200K", "THUDM/glm-4-9b-chat-1m"])
     p.add_argument("--datalen", type=str, default="122k",
-                   choices=["60k", "122k", "244k"])
+                   choices=["12k", "44k", "28k", "60k", "122k", "244k"])
+    p.add_argument("--device", type=int, default="0", help="gpu device to use")
 
     return p.parse_args()
 
@@ -133,6 +153,7 @@ if __name__ == '__main__':
 
     model_name = args.model_name
     length = args.datalen
+    device = args.device
 
     min_prompt_len = configs[model_name][length]["min_prompt_len"]
     temperature = 0.6

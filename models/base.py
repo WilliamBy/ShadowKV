@@ -73,6 +73,7 @@ class LLM:
 
     @torch.inference_mode()
     def prefill(self, input_ids: torch.LongTensor):
+        # clear kvcache and re-prefill
         self.kv_cache.clear()
         logits = self.inference(input_ids=input_ids, position_ids=self.get_ctx(input_ids))
 
@@ -81,6 +82,7 @@ class LLM:
 
     @torch.inference_mode()
     def prefill_cont(self, input_ids: torch.LongTensor):
+        # prefill based on previous kvcache
         logits = self.inference(input_ids=input_ids, position_ids=self.get_ctx(input_ids))
         return logits
     

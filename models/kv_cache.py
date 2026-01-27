@@ -18,9 +18,15 @@
 import torch
 import math
 import gc
+from termcolor import colored
 from torch import nn
-from models.tensor_op import batch_gather_gemm_rotary_pos_emb_cuda
+from models.tensor_op import batch_gather_gemm_rotary_pos_emb_cuda, square_root_js_divergence
 from kernels import shadowkv
+
+
+import torch.nn.functional as F
+
+
 
 class KV_Cache:
     """Full Attention"""
@@ -115,7 +121,7 @@ class ShadowKVCache:
         device :str = 'cuda:0',
         dtype = torch.bfloat16,
         sparse_budget: int = 2048,
-        chunk_size=8,
+        chunk_size=4,
         rank=160,
         ) -> None:
         
@@ -132,10 +138,15 @@ class ShadowKVCache:
         self.sparse_budget = int(sparse_budget)
         self.chunk_size = chunk_size
         self.rank = rank
-        self.local_chunk = 4
+        self.local_chunk = 8
         self.outlier_chunk = 48
 
         assert self.batch_size == 1, "ShadowKV class only supports batch_size=1, please use ShadowKV_CPU class for batch_size > 1"
+
+        # self.selected_chunk_idx = None
+        # self.v_cache_cpu = None
+        # self.k_cache_buffer = None
+        # self.v_cache_buffer = None
 
         self.selected_chunk_idx = torch.zeros(
             config.num_hidden_layers,
@@ -246,13 +257,18 @@ class ShadowKVCache:
 
         key_states_roped_ctx = key_states_roped[:,:,:self.chunks*self.chunk_size].view(self.batch_size, self.num_key_value_heads, self.chunks, self.chunk_size, self.head_dim)
         landmark_candidates = key_states_roped_ctx.mean(dim=-2) # [bsz, kv_heads, chunks, head_dim]
+
+        # compute the JS divergence between the landmark_candidates and the key_states_roped in local
+        j1 = F.softmax(landmark_candidates, dim=-1)
+        j2 = F.softmax(key_states_roped[:,:, -self.chunks:], dim=-1)
+        cos_sim = square_root_js_divergence(j1, j2)
+       
+        outlier_chunk_idx = cos_sim.topk(self.outlier_chunk, largest=False).indices
         
-        # compute the cos similarity between it and the original key cache
-        cos_sim = torch.nn.functional.cosine_similarity(landmark_candidates.unsqueeze(3).expand(-1, -1, -1, self.chunk_size, -1), key_states_roped_ctx, dim=-1) # [bsz, kv_heads, chunks, chunk_size]
         
-        # get the outlier_chunk idx for each head # [bsz, kv_heads, outlier_chunk]
-        outlier_chunk_idx = cos_sim.min(dim=-1).values.topk(self.outlier_chunk, largest=False).indices
-    
+        # print(cos_sim.shape)
+        # print(outlier_chunk_idx.shape)
+        
         # [bsz, kv_heads, chunks, chunk_size, head_dim] --gather[bsz, kv_heads, outlier_chunk]-->[bsz, kv_heads, outlier_chunk, chunk_size, head_dim]
         outlier_chunk_k_cache = key_states_roped_ctx.gather(dim=2, index=outlier_chunk_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, self.chunk_size, self.head_dim)).view(self.batch_size, self.num_key_value_heads, self.outlier_chunk*self.chunk_size, self.head_dim)
         
@@ -555,12 +571,14 @@ class ShadowKVCache_CPU:
         key_states_roped_ctx = key_states_roped[:,:,:self.chunks*self.chunk_size].view(bsz, self.num_key_value_heads, self.chunks, self.chunk_size, self.head_dim)
         landmark_candidates = key_states_roped_ctx.mean(dim=-2) # [bsz, kv_heads, chunks, head_dim]
         
-        # compute the cos similarity between it and the original key cache
-        cos_sim = torch.nn.functional.cosine_similarity(landmark_candidates.unsqueeze(3).expand(-1, -1, -1, self.chunk_size, -1), key_states_roped_ctx, dim=-1) # [bsz, kv_heads, chunks, chunk_size]
-        
-        # get the outlier_chunk idx for each head # [bsz, kv_heads, outlier_chunk]
-        outlier_chunk_idx = cos_sim.min(dim=-1).values.topk(self.outlier_chunk, largest=False).indices
-    
+        # compute the JS divergence between the landmark_candidates and the key_states_roped in local
+        # [Note]: normalize before compute the JS divergence for fairness
+        j1 = F.softmax(landmark_candidates, dim=-1)
+        j2 = F.softmax(key_states_roped[:,:, -self.chunks:], dim=-1)
+        cos_sim = square_root_js_divergence(j1, j2)
+       
+        outlier_chunk_idx = cos_sim.topk(self.outlier_chunk, largest=False).indices
+
         # [bsz, kv_heads, chunks, chunk_size, head_dim] --gather[bsz, kv_heads, outlier_chunk]-->[bsz, kv_heads, outlier_chunk, chunk_size, head_dim]
         outlier_chunk_k_cache = key_states_roped_ctx.gather(dim=2, index=outlier_chunk_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, self.chunk_size, self.head_dim)).view(bsz, self.num_key_value_heads, self.outlier_chunk*self.chunk_size, self.head_dim)
         
