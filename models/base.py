@@ -27,6 +27,8 @@ from flash_attn import flash_attn_with_kvcache
 
 from .tensor_op import sample_token, layer_norm, minference_prefill_kernel
 from .kv_cache import KV_Cache, ShadowKVCache, ShadowKVCache_CPU
+from .exp_kvcache import ExperimentalKVCache
+from .opt_kvcache import OptKVCache
 
 class LLM:
 
@@ -34,6 +36,7 @@ class LLM:
         gpu_mem = f"{round(torch.cuda.memory_allocated(self.device) / 1024**3, 2)} GB / {round(torch.cuda.get_device_properties(self.device).total_memory / 1024**3, 2)} GB"
         return f"LLM: {self.model_name}, attn_mode: {self.attn_mode}, max_length: {self.max_length}, batch_size: {self.batch_size}, device: {self.device}, dtype: {self.dtype}, GPU mem: {gpu_mem}"
 
+    # NOTE: register your kvcache method here
     def init_kv_cache(self, sparse_budget: int, rank: int, chunk_size: int, config):
         if self.attn_mode == 'full':
             self.kv_cache = KV_Cache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size)
@@ -41,6 +44,10 @@ class LLM:
             self.kv_cache = ShadowKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
         elif self.attn_mode.lower() == 'shadowkv_cpu':
             self.kv_cache = ShadowKVCache_CPU(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
+        elif self.attn_mode.lower() == 'experimental':
+            self.kv_cache = ExperimentalKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
+        elif self.attn_mode.lower() == 'optimized':
+            self.kv_cache = OptKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
         else:
             raise ValueError(f"Invalid attention mode {self.attn_mode}")
 
@@ -101,6 +108,7 @@ class LLM:
         return input_ids
 
     @torch.inference_mode()
+    # NOTE: adapt this method if using new kvcache
     def layer_compute(self, 
             buffer,
             layer_idx :int, 

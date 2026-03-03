@@ -1,118 +1,19 @@
-################################################################################
-#
-# Copyright 2024 ByteDance Ltd. and/or its affiliates. All rights reserved.
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-################################################################################
-
 import torch
 import math
 import gc
+from termcolor import colored
 from torch import nn
-from models.tensor_op import batch_gather_gemm_rotary_pos_emb_cuda
+from models.tensor_op import batch_gather_gemm_rotary_pos_emb_cuda, square_root_js_divergence
 from kernels import shadowkv
 from logging import getLogger
 
+
+import torch.nn.functional as F
+
 logger = getLogger(__name__)
 
-class KV_Cache:
-    """Full Attention"""
-    def __init__(self, 
-        config :object,
-        batch_size :int = 1,
-        max_length :int = 32*1024, 
-        device :str = 'cuda:0',
-        dtype = torch.bfloat16) -> None:
-
-        self.config = config
-        self.max_length = max_length
-        self.device = device
-        self.dtype = dtype
-        self.k_cache = torch.zeros(
-            config.num_hidden_layers,
-            batch_size,
-            config.num_key_value_heads,
-            max_length,
-            config.hidden_size // config.num_attention_heads,
-            device='cpu',
-            dtype=self.dtype
-        )
-
-        logger.info("initializing original KVCache (full attention)")
-
-        self.v_cache = torch.zeros(
-            config.num_hidden_layers,
-            batch_size,
-            config.num_key_value_heads,
-            max_length,
-            config.hidden_size // config.num_attention_heads,
-            device='cpu',
-            dtype=self.dtype
-        )
-        self.num_layers = config.num_hidden_layers
-        self.kv_offset = 0
-
-        # batch prefill record
-        self.prefilled_batch = 0
-        self.batch_size = batch_size
-
-    def update_kv_cache(self, 
-            new_k_cache :torch.Tensor,
-            new_v_cache :torch.Tensor,
-            layer_idx :int
-            ):
-
-        bsz, _, incoming, _ = new_v_cache.shape # [bsz, num_kv_heads, incoming, head_dim]
-
-        if bsz == self.batch_size:
-            self.prefilled_batch = 0
-
-        self.k_cache[layer_idx][self.prefilled_batch:self.prefilled_batch + bsz, :, self.kv_offset:self.kv_offset + incoming].copy_(new_k_cache)
-        self.v_cache[layer_idx][self.prefilled_batch:self.prefilled_batch + bsz, :, self.kv_offset:self.kv_offset + incoming].copy_(new_v_cache)
-
-        key = self.k_cache[layer_idx][self.prefilled_batch:self.prefilled_batch + bsz, :, :self.kv_offset + incoming]
-        value = self.v_cache[layer_idx][self.prefilled_batch:self.prefilled_batch + bsz, :, :self.kv_offset + incoming]
-
-        if incoming > 1: # prefill
-            key = key.to(self.device)
-            value = value.to(self.device)
-
-        if layer_idx == self.num_layers - 1:
-            self.prefilled_batch += bsz
-            if self.prefilled_batch == self.batch_size:
-                self.kv_offset += incoming
-        
-        return key.to(self.device), value.to(self.device)
-    
-    def print_stats(self):
-        print(f"KVCache | max_length {self.max_length} | dtype {self.dtype} | cached {self.kv_offset}")
-
-    def H2D(self):
-        gc.collect()
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        self.k_cache = self.k_cache.to(self.device)
-        self.v_cache = self.v_cache.to(self.device)
-
-    def clear(self):
-        self.kv_offset = 0
-        self.prefilled_batch = 0
-
-    def get_kv_len(self):
-        return self.kv_offset
-
-class ShadowKVCache:
-    """ShadowKV, only for accuracy measurement and understanding, not for efficiency, please refer to ShadowKV_CPU for the efficient implementation"""
+class ExperimentalKVCache:
+    """ExperimentalKVCache, only for accuracy measurement and understanding, not for efficiency, please refer to ShadowKV_CPU for the efficient implementation"""
     def __init__(self, 
         config :object,
         batch_size :int = 1,
@@ -120,11 +21,11 @@ class ShadowKVCache:
         device :str = 'cuda:0',
         dtype = torch.bfloat16,
         sparse_budget: int = 2048,
-        chunk_size=8,
+        chunk_size=4,
         rank=160,
         ) -> None:
 
-        logger.info("initializing ShadowKVCache")
+        logger.info("initializing ExperimentalKVCache")
         
         self.config = config
         self.batch_size = batch_size
@@ -139,10 +40,15 @@ class ShadowKVCache:
         self.sparse_budget = int(sparse_budget)
         self.chunk_size = chunk_size
         self.rank = rank
-        self.local_chunk = 4
+        self.local_chunk = 8
         self.outlier_chunk = 48
 
         assert self.batch_size == 1, "ShadowKV class only supports batch_size=1, please use ShadowKV_CPU class for batch_size > 1"
+
+        # self.selected_chunk_idx = None
+        # self.v_cache_cpu = None
+        # self.k_cache_buffer = None
+        # self.v_cache_buffer = None
 
         self.selected_chunk_idx = torch.zeros(
             config.num_hidden_layers,
@@ -199,7 +105,6 @@ class ShadowKVCache:
     def print_stats(self):
         print(f"ShadowKV | sparse budget {self.sparse_budget} | chunk size {self.chunk_size} |rank {self.rank} | cached {self.kv_offset} | local_chunk {self.local_chunk} | outlier_chunk {self.outlier_chunk}")
 
-    # NOTE: get compression matrix via SVD on context key cache
     def get_svd(self, new_k_cache, layer_idx):
         # [bsz, 8, prefill, 128] OR [bsz, prefill, 1024]
         if new_k_cache.shape[1] <= 32:
@@ -220,7 +125,6 @@ class ShadowKVCache:
         self.U[layer_idx].copy_(u[:, :, :self.rank].to(self.dtype)) # [bsz, 128k, 160]
         self.SV[layer_idx].copy_(torch.matmul(torch.diag_embed(s[:, :self.rank]), v[:, :self.rank]).to(self.dtype).view(self.batch_size, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)) # [bsz, 8, 160, 128]
     
-    # NOTE: Save page digests
     def register_k_landmark(self, k_landmark, k_landmark_idx, layer_idx):
         num_landmarks = k_landmark.shape[-2]
         if layer_idx == 0:
@@ -255,13 +159,18 @@ class ShadowKVCache:
 
         key_states_roped_ctx = key_states_roped[:,:,:self.chunks*self.chunk_size].view(self.batch_size, self.num_key_value_heads, self.chunks, self.chunk_size, self.head_dim)
         landmark_candidates = key_states_roped_ctx.mean(dim=-2) # [bsz, kv_heads, chunks, head_dim]
+
+        # compute the JS divergence between the landmark_candidates and the key_states_roped in local
+        j1 = F.softmax(landmark_candidates, dim=-1)
+        j2 = F.softmax(key_states_roped[:,:, -self.chunks:], dim=-1)
+        cos_sim = square_root_js_divergence(j1, j2)
+       
+        outlier_chunk_idx = cos_sim.topk(self.outlier_chunk, largest=False).indices
         
-        # compute the cos similarity between it and the original key cache
-        cos_sim = torch.nn.functional.cosine_similarity(landmark_candidates.unsqueeze(3).expand(-1, -1, -1, self.chunk_size, -1), key_states_roped_ctx, dim=-1) # [bsz, kv_heads, chunks, chunk_size]
         
-        # get the outlier_chunk idx for each head # [bsz, kv_heads, outlier_chunk]
-        outlier_chunk_idx = cos_sim.min(dim=-1).values.topk(self.outlier_chunk, largest=False).indices
-    
+        # print(cos_sim.shape)
+        # print(outlier_chunk_idx.shape)
+        
         # [bsz, kv_heads, chunks, chunk_size, head_dim] --gather[bsz, kv_heads, outlier_chunk]-->[bsz, kv_heads, outlier_chunk, chunk_size, head_dim]
         outlier_chunk_k_cache = key_states_roped_ctx.gather(dim=2, index=outlier_chunk_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, self.chunk_size, self.head_dim)).view(self.batch_size, self.num_key_value_heads, self.outlier_chunk*self.chunk_size, self.head_dim)
         
@@ -289,7 +198,6 @@ class ShadowKVCache:
             assert self.sparse_budget < incoming
             self.kv_offset += incoming
 
-    # NOTE: estimated attention score (approximately topk selection)
     def get_retrieval_position_ids(self, layer_idx, query_states):
         # self.k_landmark[layer_idx][:, :, :self.chunks] is [bsz, 8, chunks, head_dim]
         # chunk_attn: [bsz, 32, window_size, chunks]
@@ -377,9 +285,8 @@ class ShadowKVCache:
     def get_kv_len(self):
         return self.kv_offset
 
-
-class ShadowKVCache_CPU:
-    """ShadowKV, can be used for Llama-3-8B, Llama-3.1-8B, GLM-4-9B, Yi-200K"""
+class ExperimentalKVCache_CPU:
+    """Memory-efficient KV cache implementation with CPU offloading"""
     def __init__(self, 
         config :object,
         batch_size :int = 1,
@@ -391,7 +298,7 @@ class ShadowKVCache_CPU:
         rank=160,
         ) -> None:
 
-        logger.info("initializing ShadowKVCache_CPU")
+        logger.info("initializing ExperimentalKVCache_CPU")
         
         self.config = config
         self.batch_size = batch_size
@@ -567,12 +474,14 @@ class ShadowKVCache_CPU:
         key_states_roped_ctx = key_states_roped[:,:,:self.chunks*self.chunk_size].view(bsz, self.num_key_value_heads, self.chunks, self.chunk_size, self.head_dim)
         landmark_candidates = key_states_roped_ctx.mean(dim=-2) # [bsz, kv_heads, chunks, head_dim]
         
-        # compute the cos similarity between it and the original key cache
-        cos_sim = torch.nn.functional.cosine_similarity(landmark_candidates.unsqueeze(3).expand(-1, -1, -1, self.chunk_size, -1), key_states_roped_ctx, dim=-1) # [bsz, kv_heads, chunks, chunk_size]
-        
-        # get the outlier_chunk idx for each head # [bsz, kv_heads, outlier_chunk]
-        outlier_chunk_idx = cos_sim.min(dim=-1).values.topk(self.outlier_chunk, largest=False).indices
-    
+        # compute the JS divergence between the landmark_candidates and the key_states_roped in local
+        # [Note]: normalize before compute the JS divergence for fairness
+        j1 = F.softmax(landmark_candidates, dim=-1)
+        j2 = F.softmax(key_states_roped[:,:, -self.chunks:], dim=-1)
+        cos_sim = square_root_js_divergence(j1, j2)
+       
+        outlier_chunk_idx = cos_sim.topk(self.outlier_chunk, largest=False).indices
+
         # [bsz, kv_heads, chunks, chunk_size, head_dim] --gather[bsz, kv_heads, outlier_chunk]-->[bsz, kv_heads, outlier_chunk, chunk_size, head_dim]
         outlier_chunk_k_cache = key_states_roped_ctx.gather(dim=2, index=outlier_chunk_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, self.chunk_size, self.head_dim)).view(bsz, self.num_key_value_heads, self.outlier_chunk*self.chunk_size, self.head_dim)
         
