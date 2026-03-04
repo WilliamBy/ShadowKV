@@ -134,7 +134,7 @@ class LLM:
             else:
                 hidden_states = flash_attn_with_kvcache(q=query_states.transpose(1, 2), k_cache=key_states.transpose(1, 2), v_cache=value_states.transpose(1, 2), causal=True)
 
-        elif isinstance(self.kv_cache, ShadowKVCache) or isinstance(self.kv_cache, ShadowKVCache_CPU):
+        elif isinstance(self.kv_cache, ShadowKVCache) or isinstance(self.kv_cache, ShadowKVCache_CPU) or isinstance(self.kv_cache, OptKVCache) or isinstance(self.kv_cache, ExperimentalKVCache):
 
             if q_len > 4*1024: # prefill
                 # svd unrope key and save

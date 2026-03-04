@@ -1181,7 +1181,7 @@ class OptKVCache:
         rank=160,
         ) -> None:
 
-        logger.info("initializing OptKVCache")
+        logger.warning("initializing OptKVCache")
         
         self.config = config
         self.batch_size = batch_size
@@ -1385,7 +1385,7 @@ class OptKVCache:
         # ==========================================
         # 1. 内存布局参数计算 (引入 Attention Sinks)
         # ==========================================
-        sink_size = 128 # 强制保留前 4 个 Token 稳定注意力
+        sink_size = 4 # 强制保留前 4 个 Token 稳定注意力
         seq_for_chunks = incoming - sink_size
         
         self.chunks = seq_for_chunks // self.chunk_size - self.local_chunk 
@@ -1507,7 +1507,7 @@ class OptKVCache:
         self.selected_chunk_idx[layer_idx].copy_(selected_chunks, non_blocking=True)
 
         # 8. 补偿 Attention Sinks 造成的物理位置偏移
-        sink_size = 128 # 必须与 Prefill 阶段强行保留的 Token 数量完全一致
+        sink_size = 4 # 必须与 Prefill 阶段强行保留的 Token 数量完全一致
         
         # 映射回 Token 级的物理 Position IDs
         position_ids = (selected_chunks.unsqueeze(-1) * self.chunk_size + \
