@@ -48,7 +48,7 @@ class KV_Cache:
             dtype=self.dtype
         )
 
-        logger.warning("initializing original KVCache (full attention)")
+        logger.info("initializing original KVCache (full attention)")
 
         self.v_cache = torch.zeros(
             config.num_hidden_layers,
@@ -124,7 +124,7 @@ class ShadowKVCache:
         rank=160,
         ) -> None:
 
-        logger.warning("initializing ShadowKVCache")
+        logger.info("initializing ShadowKVCache")
         
         self.config = config
         self.batch_size = batch_size
@@ -391,7 +391,7 @@ class ShadowKVCache_CPU:
         rank=160,
         ) -> None:
 
-        logger.warning("initializing ShadowKVCache_CPU")
+        logger.info("initializing ShadowKVCache_CPU")
         
         self.config = config
         self.batch_size = batch_size
