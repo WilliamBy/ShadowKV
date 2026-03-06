@@ -1,7 +1,7 @@
 import torch
 import math
 from torch import nn
-from utils import get_logger
+from models.logger import get_logger
 
 import torch.nn.functional as F
 

@@ -21,9 +21,9 @@ import gc
 from torch import nn
 from models.tensor_op import batch_gather_gemm_rotary_pos_emb_cuda
 from kernels import shadowkv
-from logging import getLogger
+from models.logger import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 class KV_Cache:
     """Full Attention"""

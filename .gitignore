@@ -4,3 +4,7 @@ build/
 *.pyc
 *.so
 *.jsonl
+
+*.log
+*.xz
+*.tar
