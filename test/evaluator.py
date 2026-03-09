@@ -76,8 +76,27 @@ class Evaluator:
                 
             elif 'long_bench' in dataset.dataset_name:
                 rets = llm.generate(prompt.to(llm.device), gen_len=dataset.gen_len, verbose=False, top_p=1.0, temperature=0.0)
-                for (pred, gt, classes) in zip(rets, dataset.gt[i*bsz:(i+1)*bsz], dataset.classes[i*bsz:(i+1)*bsz]):
-                    scores.append(max([dataset.metric(pred, g, classes) for g in gt]))
+                task_name = dataset.dataset_name.split('/')[-1]
+                
+                for (pred, gt, all_classes) in zip(rets, dataset.gt[i*bsz:(i+1)*bsz], dataset.classes[i*bsz:(i+1)*bsz]):
+                    # Post-process prediction based on task type (from long_bench/eval.py)
+                    pred_processed = pred.strip()
+                    
+                    # Apply task-specific post-processing
+                    if task_name in ["trec", "triviaqa", "samsum", "lsht"]:
+                        pred_processed = pred_processed.lstrip("\n").split("\n")[0]
+                    if task_name in ["multifieldqa_zh", "dureader"]:
+                        pred_processed = pred_processed.split("问题：")[0].strip()
+                    if task_name in ["lsht"]:
+                        pred_processed = pred_processed.split("新闻内容：")[0].strip()
+                    if task_name in ["passage_retrieval_zh"]:
+                        pred_processed = pred_processed.split("请问")[0].split("提示")[0].strip()
+                    
+                    # Calculate score for each ground truth, take maximum (from long_bench/eval.py scorer)
+                    score = 0.0
+                    for ground_truth in gt:
+                        score = max(score, dataset.metric(pred_processed, ground_truth, all_classes=all_classes))
+                    scores.append(score)
 
             else:
                 rets = llm.generate(prompt.to(llm.device), gen_len=dataset.gen_len, verbose=False, top_p=1.0, temperature=0.0)
@@ -106,6 +125,22 @@ class Evaluator:
                         "response": rets_list,
                         "answer": dataset.gt[i*bsz:(i+1)*bsz],
                         "correct": scores,
+                        "avg_score": avg_score,
+                    }
+            elif 'long_bench' in dataset.dataset_name:
+                # Output format consistent with pred.py
+                task_name = dataset.dataset_name.split('/')[-1]
+                preds_list = []
+                for j in range(bsz):
+                    preds_list.append({
+                        "pred": rets[j],
+                        "answers": dataset.gt[i*bsz+j],
+                        "all_classes": dataset.classes[i*bsz+j],
+                    })
+                preds = {
+                        "task": task_name,
+                        "predictions": preds_list,
+                        "correct": scores[i*bsz:(i+1)*bsz],
                         "avg_score": avg_score,
                     }
             else:
