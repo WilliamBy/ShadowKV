@@ -16,7 +16,7 @@ import datetime
 
 # attach shadowkv package
 import sys
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.append(root_dir)
 
 
@@ -34,6 +34,7 @@ def parse_args():
     p.add_argument("--rank", type=int, default=160)
     p.add_argument("--chunk_size", type=int, default=8)
     p.add_argument("--minference", action='store_true', default=False)
+    p.add_argument("-e", action='store_true', default=False)
 
     return p.parse_args()
 
@@ -187,11 +188,13 @@ if __name__ == "__main__":
     model2maxlen = json.load(
         open("data/long_bench/config/model2maxlen.json", "r"))
     device_list = [i for i in range(torch.cuda.device_count())]
-    model_name = args.model
+    model_name = args.model_name
+    # distributed config
+    dist_config=init_dist()
     # define your model
-    model, tokenizer, eos_token_ids = load_model_and_tokenizer(model_name)
+    model, tokenizer, eos_token_ids = load_model_and_tokenizer(model_name, dist_config, torch.bfloat16, args)
 
-    max_length = model2maxlen[model_name]
+    max_length = model2maxlen[model_name.split('/')[-1]]
     if args.e:
         datasets = [
             "qasper",
@@ -209,12 +212,12 @@ if __name__ == "__main__":
             "repobench-p",
         ]
     else:
-        datasets = [args.task]
+        datasets = [ds.split('/')[-1] for ds in args.dataset_name]
     # we design specific prompt format and max generation length for each task, feel free to modify them to optimize model output
     dataset2prompt = json.load(
-        open("eval/LongBench/config/dataset2prompt.json", "r"))
+        open("data/long_bench/config/dataset2prompt.json", "r"))
     dataset2maxlen = json.load(
-        open("eval/LongBench/config/dataset2maxlen.json", "r"))
+        open("data/long_bench/config/dataset2maxlen.json", "r"))
     # predict on each dataset
     if not os.path.exists("eval/LongBench/pred"):
         os.makedirs("eval/LongBench/pred")
