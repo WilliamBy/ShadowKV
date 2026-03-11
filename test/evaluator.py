@@ -76,45 +76,55 @@ class Evaluator:
                     if isinstance(gts, list):
                         if len(gts) == 1:
                             gts = gts[0]
-                    # print(pred, gts, dataset.metric(pred, gts))
                     scores.append(dataset.metric(pred, gts))
 
             elif 'long_bench' in dataset.dataset_name:
-                rets = llm.generate(prompt.to(
+                assert bsz == 1, "LongBench only support bsz=1 for now"
+
+                # Apply Chat template for longbench input
+                chat_prompts = []
+                for p in prompt:
+                    chat_prompts.append(llm.encode(dataset.tokenizer.decode(p), template='chat'))
+                batch_inputs = torch.cat(chat_prompts)
+                # Generation
+                rets = llm.generate(batch_inputs.to(
                     llm.device), gen_len=dataset.gen_len, verbose=False, top_p=1.0, temperature=0.0)
                 task_name = dataset.dataset_name.split('/')[-1]
 
-                for (pred, gt, all_classes) in zip(rets, dataset.gt[i*bsz:(i+1)*bsz], dataset.classes[i*bsz:(i+1)*bsz]):
-                    # Post-process prediction
-                    pred_processed = (
-                        pred.split(".assistant")[0]
-                            .split("\n\nQuestion")[0]
-                            .split("</s>")[0]
-                            .split("(Document")[0]
-                            .split("\n\nQuestion")[0]
-                            .split("\n\nAnswer")[0]
-                            .split("(Passage")[0]
-                            .strip()
-                    )
-                    # task-specific post-processing
-                    if task_name in ["trec", "triviaqa", "samsum", "lsht"]:
-                        pred_processed = pred_processed.lstrip(
-                            "\n").split("\n")[0]
-                    if task_name in ["multifieldqa_zh", "dureader"]:
-                        pred_processed = pred_processed.split("问题：")[0].strip()
-                    if task_name in ["lsht"]:
-                        pred_processed = pred_processed.split("新闻内容：")[
-                            0].strip()
-                    if task_name in ["passage_retrieval_zh"]:
-                        pred_processed = pred_processed.split(
-                            "请问")[0].split("提示")[0].strip()
+                # Metrics
+                pred = rets[0]
+                gts = dataset.gt[i]
+                classes = dataset.classes[i]
 
-                    # Calculate score for each ground truth, take maximum score for a batch
-                    score = 0.0
-                    for ground_truth in gt:
-                        score = max(score, dataset.metric(task_name,
-                                                          pred_processed, ground_truth, all_classes=all_classes))
-                    scores.append(score)
+                processed_pred = (
+                    pred.split(".assistant")[0]
+                    .split("\n\nQuestion")[0]
+                    .split("</s>")[0]
+                    .split("(Document")[0]
+                    .split("\n\nQuestion")[0]
+                    .split("\n\nAnswer")[0]
+                    .split("(Passage")[0]
+                    .strip()
+                )
+                if task_name in ["trec", "triviaqa", "samsum", "lsht"]:
+                    processed_pred = processed_pred.lstrip("\n").split("\n")[0]
+                if task_name in ["multifieldqa_zh", "dureader"]:
+                    processed_pred = processed_pred.split("问题：")[0].strip()
+                if task_name in ["lsht"]:
+                    processed_pred = processed_pred.split("新闻内容：")[0].strip()
+                if task_name in ["passage_retrieval_zh"]:
+                    processed_pred = processed_pred.split("请问")[0].split("提示")[0].strip()
+
+                # Score max pool
+                score = 0.0
+                for ground_truth in gts:
+                    score = max(
+                        score,
+                        dataset.metric(
+                            processed_pred, ground_truth, all_classes=classes
+                        ),
+                    )
+                scores.append(score)
 
             else:
                 rets = llm.generate(prompt.to(

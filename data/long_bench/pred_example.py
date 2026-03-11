@@ -228,7 +228,7 @@ if __name__ == "__main__":
     dataset2maxlen = json.load(
         open("data/long_bench/config/dataset2maxlen.json", "r"))
     for dataset in datasets:
-        data = load_dataset("THUDM/LongBench", dataset, split="test")
+        data = load_dataset("THUDM/LongBench", dataset, split="test", trust_remote_code=True)
         out_path = f"archive/{args.model_name.split('/')[-1]}/{dataset}_{args.datalen}_{args.method}_{args.sparse_budget}_{args.rank}_{args.chunk_size}.jsonl"
         prompt_format = dataset2prompt[dataset]
         max_gen = dataset2maxlen[dataset]

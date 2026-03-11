@@ -101,6 +101,7 @@ def count_score(prediction, ground_truth, **kwargs):
 def retrieval_score(prediction, ground_truth, **kwargs):
     pattern = r"Paragraph (\d+)"
     matches = re.findall(pattern, ground_truth)
+    assert len(matches) > 0, f"[Error] Unexpected ground_truth for dataset, please check. \nGot '{ground_truth}'"
     ground_truth_id = matches[0]
     numbers = re.findall(r"\d+", prediction)
     right_num = 0
@@ -240,7 +241,7 @@ long_bench_metrics = {
     "repobench-p": code_sim_score,
 }
 
-def long_bench_score(task, predictions, answers, all_classes):
+def long_bench_task_score(task, predictions, answers, all_classes):
     task2metric = long_bench_metrics
     total_score = 0.0
     for prediction, ground_truths in zip(predictions, answers):
