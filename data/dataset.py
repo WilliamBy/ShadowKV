@@ -299,23 +299,32 @@ class Dataset:
             tokenized_prompts = []
             gts = []
             all_classes_list = []
+
+            min_length = 4 * 1024 # minimal allowed length of prompt
             
             # truncate datalen
             trunc_cnt = 0
             trunc_len = 0
+            filter_cnt = 0  # Count filtered samples
 
             for i in range(self.num_samples):
                 sample = dataset[i]
                 
                 # Format prompt using loaded template
                 prompt = task_template.format(**sample)
-                # Truncate prompt to fit size limited datalen
+                
+                # Filter samples with context length < 4k tokens
                 tokenized_prompt = self.tokenizer.encode(prompt, add_special_tokens=False, return_tensors='pt')
-                if len(tokenized_prompt) > self.datalen:
+                if tokenized_prompt.shape[-1] < min_length:
+                    filter_cnt += 1
+                    continue
+                
+                # Truncate prompt to fit size limited datalen
+                if tokenized_prompt.shape[-1] > self.datalen:
                     half = self.datalen // 2
                     prompt = self.tokenizer.decode(tokenized_prompt[:half], skip_special_tokens=True) + self.tokenizer.decode(tokenized_prompt[-half:], skip_special_tokens=True)
                     trunc_cnt += 1
-                    trunc_len += len(tokenized_prompt) - self.datalen
+                    trunc_len += tokenized_prompt.shape[-1] - self.datalen
                     tokenized_prompt = self.tokenizer.encode(prompt, return_tensors='pt')
                 tokenized_prompts.append(tokenized_prompt)
                 
@@ -329,6 +338,7 @@ class Dataset:
                 else:
                     all_classes_list.append(None)
             
+            print(f"Filtered samples with < 4k tokens: {filter_cnt}")
             print(f"Truncated Prompt Count: {trunc_cnt}, Truncated Prompt Avg Length: {trunc_len / trunc_cnt if trunc_cnt > 0 else 0}")
             print(colored(f"Loaded {len(tokenized_prompts)} examples for LongBench task '{task_name}'", 'green'))
             return tokenized_prompts, gts, all_classes_list

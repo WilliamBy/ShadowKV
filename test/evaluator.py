@@ -84,8 +84,8 @@ class Evaluator:
                 # Apply Chat template for longbench input
                 chat_prompts = []
                 for p in prompt:
-                    chat_prompts.append(llm.encode(dataset.tokenizer.decode(p), template='chat'))
-                batch_inputs = torch.cat(chat_prompts)
+                    chat_prompts.append(llm.encode(dataset.tokenizer.decode(p), template='ctx'))
+                batch_inputs = torch.cat(chat_prompts, dim=0)
                 # Generation
                 rets = llm.generate(batch_inputs.to(
                     llm.device), gen_len=dataset.gen_len, verbose=False, top_p=1.0, temperature=0.0)

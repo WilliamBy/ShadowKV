@@ -26,10 +26,7 @@ from tqdm import tqdm
 from flash_attn import flash_attn_with_kvcache
 
 from .tensor_op import sample_token, layer_norm, minference_prefill_kernel
-from .kv_cache import KV_Cache, ShadowKVCache, ShadowKVCache_CPU
-
-from .exp_kvcache import ExperimentalKVCache
-from .opt_kvcache import OptKVCache
+from .kvcache import KV_Cache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, ExperimentalKVCache_CPU, OptKVCache, QuestCache
 
 class LLM:
 
@@ -105,7 +102,7 @@ class LLM:
             text = self.ctx_template.format(ctx=text)
         if template == 'prefix':
             text = self.prefix_template.format(ctx=text)
-        input_ids = self.tokenizer(text, return_tensors="pt", truncation=truncation).input_ids.to(self.device)
+        input_ids = self.tokenizer(text, return_tensors="pt", truncation=truncation, add_special_tokens=False).input_ids.to(self.device)
         return input_ids
 
     @torch.inference_mode()

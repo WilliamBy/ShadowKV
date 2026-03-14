@@ -197,7 +197,7 @@ class ShadowKVCache:
         self.copy_stream = torch.cuda.Stream()
 
     def print_stats(self):
-        print(f"ShadowKV | sparse budget {self.sparse_budget} | chunk size {self.chunk_size} |rank {self.rank} | cached {self.kv_offset} | local_chunk {self.local_chunk} | outlier_chunk {self.outlier_chunk}")
+        print(f"ShadowKV | sparse budget {self.sparse_budget} | chunk size {self.chunk_size} | rank {self.rank} | cached {self.kv_offset} | local_chunk {self.local_chunk} | outlier_chunk {self.outlier_chunk}")
 
     # NOTE: get compression matrix via SVD on context key cache
     def get_svd(self, new_k_cache, layer_idx):
@@ -350,6 +350,12 @@ class ShadowKVCache:
             ):
 
         incoming = new_k_cache.shape[-2]
+
+        # FIXME
+        target_shape = self.v_cache_buffer[layer_idx][:, :, self.sparse_end+self.gen_offset:self.sparse_end+self.gen_offset+incoming].shape
+        source_shape = new_v_cache.shape
+        assert target_shape == source_shape, f"{target_shape}, {source_shape}, {self.sparse_end}"
+
         self.v_cache_buffer[layer_idx][:, :, self.sparse_end+self.gen_offset:self.sparse_end+self.gen_offset+incoming].copy_(new_v_cache, non_blocking=True)
         self.k_cache_buffer[layer_idx][:, :, self.sparse_end+self.gen_offset:self.sparse_end+self.gen_offset+incoming].copy_(new_k_cache, non_blocking=True)
 
