@@ -113,9 +113,12 @@ if __name__ == '__main__':
         llm.print_kv_stats()
 
     for dataset_name in dataset_names:
-        dataset = Dataset(dataset_name, llm.tokenizer, datalen, num_samples, evaluator.dist_config.rank, evaluator.dist_config.world_size)
-        evaluator.test(llm, dataset, f"archive/{model_name.split('/')[-1]}/{dataset_name}_{datalen}_{args.method}_{sparse_budget}_{rank}_{chunk_size}.jsonl", args.method)
-    
+        if "longgen_bench" in dataset_name:
+            print("TODO")
+        else:
+            dataset = Dataset(dataset_name, llm.tokenizer, datalen, num_samples, evaluator.dist_config.rank, evaluator.dist_config.world_size)
+            evaluator.test(llm, dataset, f"archive/{model_name.split('/')[-1]}/{dataset_name}_{datalen}_{args.method}_{sparse_budget}_{rank}_{chunk_size}.jsonl", args.method)
+        
     del llm
     gc.collect()
     torch.cuda.empty_cache()

@@ -1,8 +1,6 @@
 import argparse
 import time
 import json
-from vllm import LLM, SamplingParams
-import torch
 import os
 
 def parse_args():
@@ -12,6 +10,7 @@ def parse_args():
     parser.add_argument('--gpu', type=int, default=1, help='Number of GPUs to use.')
     parser.add_argument('--output_file', type=str, required=True, help='Output file path.')
     parser.add_argument('--input_file', type=str, required=True, help='input file path.')
+    parser.add_argument('--method', type=str, required=True, help='method')
   
     args = parser.parse_args()
     return args
@@ -56,25 +55,20 @@ def process_and_save_results(inputs: list, results: list, filename: str) -> None
         })
     save_to_json(combined, filename)
 
-args = parse_args()
+INPUT_FILE = "data/longgen_bench/data/Dataset_Short.jsonl"
 
-#input_file = '/home/yuhao/THREADING-THE-NEEDLE/Dataset/Dataset_short.json'
-inputs = load_inputs(args.input_file)
+def pred(llm, genlen, output):
+    inputs = load_inputs(INPUT_FILE)
 
-# sampling_params = SamplingParams(temperature=0.95, top_p=0.95, max_tokens=args.max_length, seed=42, repetition_penalty = 1.005)
-sampling_params = SamplingParams(temperature=0.95, top_p=0.95, max_tokens=args.max_length, seed=6211027, stop = '*** finished')
+    prompts = [input_data['prompt'] for input_data in inputs]
 
-prompts = [input_data['prompt'] for input_data in inputs]
+    start_time = time.time()
+    # sampling_params = SamplingParams(temperature=0.95, top_p=0.95, max_tokens=args.max_length, seed=42, repetition_penalty = 1.005)
+    outputs = llm.generate(prompts, gen_len=genlen, temperature=0.95, top_p=0.95)
+    inference_time = time.time() - start_time
+    print(f"Inference time: {inference_time:.2f} seconds")
 
-# Setting up the LLM with the specified number of GPUs and model
-llm = LLM(model=args.model, tensor_parallel_size=args.gpu, gpu_memory_utilization=0.95)
+    results = [process_output( input['prefix']+ output.outputs[0].text) for output, input in zip(outputs,inputs)]
 
-start_time = time.time()
-outputs = llm.generate(prompts, sampling_params)
-inference_time = time.time() - start_time
-print(f"Inference time: {inference_time:.2f} seconds")
-
-results = [process_output( input['prefix']+ output.outputs[0].text) for output, input in zip(outputs,inputs)]
-
-process_and_save_results(inputs, results, args.output_file)
-print(f"\nSaved result to {args.output_file}")
+    process_and_save_results(inputs, results, output)
+    print(f"\nSaved result to {output}")
