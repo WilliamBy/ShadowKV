@@ -22,7 +22,7 @@ from tqdm import tqdm
 import torch.distributed as dist
 import pandas as pd
 import json
-import datetime
+from datasets import load_dataset
 
 from data.dataset import Dataset
 from models.base import LLM
@@ -125,8 +125,8 @@ class Evaluator:
                         ),
                     )
                 scores.append(score)
-
-            else:
+                
+            else: # infini_bench
                 rets = llm.generate(prompt.to(
                     llm.device), gen_len=dataset.gen_len, verbose=False, top_p=1.0, temperature=0.0)
                 for (pred, gt) in zip(rets, dataset.gt[i*bsz:(i+1)*bsz]):
@@ -170,6 +170,15 @@ class Evaluator:
                     "task": task_name,
                     "predictions": preds_list,
                     "correct": scores[i*bsz:(i+1)*bsz],
+                    "avg_score": avg_score,
+                }
+            elif 'infini_bench' in dataset.dataset_name:
+                task_name = dataset.dataset_name.split('/')[-1]
+                preds = {
+                    "task": task_name,
+                    "prediction": rets,
+                    "ground_truth": dataset.gt[i*bsz:(i+1)*bsz],
+                    "correct": scores,
                     "avg_score": avg_score,
                 }
             else:

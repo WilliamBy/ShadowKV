@@ -25,8 +25,8 @@ import os
 # RULER
 from .metrics import needle_score, string_match_part, multi_number, multi_words
 
-# LongBench
-from .metrics import long_bench_metrics
+# LongBench, InfiniBench
+from .metrics import long_bench_metrics, get_infinibench_scorer
 
 # NIAH
 from data.utils import generate_random_number, read_context_files, create_contexts, NIAH_TEMPLATE, RANDOM_NEEDLE_CITIES
@@ -122,6 +122,10 @@ class Dataset:
             return 50
         elif 'qa' in self.dataset_name:
             return 32
+        elif 'infini_bench' in self.dataset_name:
+            if task_name == 'longbook_sum_eng':
+                return 2048
+            return 32
         else:
             raise Exception("Gen len not found")
 
@@ -149,6 +153,9 @@ class Dataset:
             return METRICS_FN['fwe']
         elif 'qa' in self.dataset_name:
             return METRICS_FN['qa']
+        elif 'infini_bench' in self.dataset_name:
+            task_name = self.dataset_name.split('/')[-1]
+            return get_infinibench_scorer(task_name)
         else:
             raise Exception("Metric not found")
 
@@ -342,6 +349,41 @@ class Dataset:
             print(f"Truncated Prompt Count: {trunc_cnt}, Truncated Prompt Avg Length: {trunc_len / trunc_cnt if trunc_cnt > 0 else 0}")
             print(colored(f"Loaded {len(tokenized_prompts)} examples for LongBench task '{task_name}'", 'green'))
             return tokenized_prompts, gts, all_classes_list
+
+        elif 'infini_bench' in self.dataset_name: # infini_bench/xxx
+            from data.infinibench.eval import VANILLA_INFINI_BENCH_TEMPLATE, infini_bench_create_prompt, infini_bench_get_answer, truncate_by_tokens
+            
+            task = self.dataset_name.split('/')[-1]
+            dataset = load_dataset("xinrongzhang2022/InfiniteBench", split=task, num_proc=16)
+            ### {'id':xxx, 'context': xxx, 'input': xxx, 'answer':xxx}
+            if self.num_samples > 0:
+                self.num_samples = min(self.num_samples, len(dataset))
+            else:
+                self.num_samples = len(dataset)
+            tokenized_prompts = []
+            gt = []
+
+            for i in range(len(dataset)):
+                if 'llama-3' in self.tokenizer.name_or_path.lower():
+                    model_template = VANILLA_INFINI_BENCH_TEMPLATE[task]
+                elif 'yi' in self.tokenizer.name_or_path.lower():
+                    model_template = VANILLA_INFINI_BENCH_TEMPLATE[task]
+                elif 'glm' in self.tokenizer.name_or_path.lower():
+                    model_template = VANILLA_INFINI_BENCH_TEMPLATE[task]
+                else:
+                    raise Exception("Model not found", self.tokenizer.name_or_path)
+
+                input_text = infini_bench_create_prompt(dataset[i], task, model_template)
+                input_ids = truncate_by_tokens(input_text, self.tokenizer, self.datalen)
+
+                if input_ids.shape[-1] <= self.datalen:
+                    tokenized_prompts.append(input_ids)
+                    gt.append(infini_bench_get_answer(dataset[i], task))
+                
+                if len(tokenized_prompts) == self.num_samples:
+                    break
+
+            return tokenized_prompts, gt
 
         else:
             raise ValueError(f"Dataset {self.dataset_name} not found, please choose in ruler, persona, infini_bench, needle, niah, long_bench")

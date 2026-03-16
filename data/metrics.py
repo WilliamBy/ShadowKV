@@ -190,7 +190,6 @@ def qa_f1_score(prediction, ground_truth, **kwargs):
     ground_truth_tokens = normalized_ground_truth.split()
     return f1_score(prediction_tokens, ground_truth_tokens)
 
-
 def normalize_zh_answer(s):
     """Lower text and remove punctuation, extra whitespace."""
 
@@ -273,3 +272,6 @@ def long_bench_task_score(task, predictions, answers, all_classes):
             )
         total_score += score
     return round(100 * total_score / len(predictions), 2)
+
+# infinibench
+from .infinibench.compute_score import get_scorer as get_infinibench_scorer
