@@ -1,7 +1,11 @@
 import torch
-from models.tensor_op import repeat_kv
+from utils import gc_and_sync
 
-class QuestCache:
+from models.tensor_op import repeat_kv
+from models.kvcache.kv_base import KVCacheBase
+
+
+class QuestCache(KVCacheBase):
     """Use Max and Min landmarks for retrieval"""
     def __init__(self, 
         config :object,
@@ -10,7 +14,7 @@ class QuestCache:
         device :str = 'cuda:0',
         dtype = torch.bfloat16,
         sparse_budget: int = 2048,
-        chunk_size=16,
+        chunk_size=8,
         ) -> None:
         
         self.config = config
@@ -26,23 +30,23 @@ class QuestCache:
         self.sparse_budget = int(sparse_budget)
         self.chunk_size = chunk_size
 
-        self.k_cache_cpu = torch.zeros(
+        self.k_cache = torch.zeros(
             config.num_hidden_layers,
             batch_size,
             config.num_key_value_heads,
             self.max_length,
             self.config.hidden_size // self.config.num_attention_heads,
-            device=self.device,
+            device="cpu",
             dtype=self.dtype
         )
 
-        self.v_cache_cpu = torch.zeros(
+        self.v_cache = torch.zeros(
             config.num_hidden_layers,
             batch_size,
             config.num_key_value_heads,
             self.max_length,
             self.config.hidden_size // self.config.num_attention_heads,
-            device=self.device,
+            device="cpu",
             dtype=self.dtype
         )
 
@@ -51,7 +55,7 @@ class QuestCache:
         self.prefill = 0
         self.gen_offset = 0
 
-        self.k_landmark_max = []
+        self.k_landmark_max = [] # [(bsz, kv_head, chunks, dim)]
         self.k_landmark_min = []
 
     def print_stats(self):
@@ -70,8 +74,8 @@ class QuestCache:
         incoming = new_k_cache.shape[-2] # [bsz, num_kv_heads, incoming, head_dim]
         self.prefill = incoming
         
-        self.v_cache_cpu[layer_idx][:, :, :incoming] = new_v_cache.clone()
-        self.k_cache_cpu[layer_idx][:, :, :incoming] = new_k_cache.clone()
+        self.v_cache[layer_idx][:, :, :incoming] = new_v_cache.clone()
+        self.k_cache[layer_idx][:, :, :incoming] = new_k_cache.clone()
 
         self.chunks = incoming // self.chunk_size - 32 // self.chunk_size
         self.select_sets = self.sparse_budget // self.chunk_size
@@ -109,13 +113,13 @@ class QuestCache:
 
         position_ids = (topk_chunk.unsqueeze(-1) * self.chunk_size + torch.arange(self.chunk_size, device=topk_chunk.device).unsqueeze(0).unsqueeze(0).unsqueeze(0)).view(1, self.num_key_value_heads, -1) # [bsz, 8, select_sets * chunk_size]
 
-        key_ = self.k_cache_cpu[layer_idx].gather(dim=-2, index=position_ids.unsqueeze(-1).expand(-1, -1, -1, self.head_dim))
-        value_ = self.v_cache_cpu[layer_idx].gather(dim=-2, index=position_ids.unsqueeze(-1).expand(-1, -1, -1, self.head_dim))
+        key_ = self.k_cache[layer_idx].gather(dim=-2, index=position_ids.unsqueeze(-1).expand(-1, -1, -1, self.head_dim))
+        value_ = self.v_cache[layer_idx].gather(dim=-2, index=position_ids.unsqueeze(-1).expand(-1, -1, -1, self.head_dim))
 
         gen_offset = self.gen_offset if layer_idx == self.num_layers - 1 else self.gen_offset + self.incoming_q_len
 
-        ret_k = torch.cat([key_, self.k_cache_cpu[layer_idx][:,:,self.chunk_end:self.prefill+gen_offset]], dim = 2)
-        ret_v = torch.cat([value_, self.v_cache_cpu[layer_idx][:,:,self.chunk_end:self.prefill+gen_offset]], dim = 2)
+        ret_k = torch.cat([key_, self.k_cache[layer_idx][:,:,self.chunk_end:self.prefill+gen_offset]], dim = 2)
+        ret_v = torch.cat([value_, self.v_cache[layer_idx][:,:,self.chunk_end:self.prefill+gen_offset]], dim = 2)
 
         return ret_k, ret_v
         
@@ -126,16 +130,16 @@ class QuestCache:
             ):
 
         incoming = new_k_cache.shape[-2]
-        self.k_cache_cpu[layer_idx][:, :, self.kv_offset:self.kv_offset + incoming].copy_(new_k_cache)
-        self.v_cache_cpu[layer_idx][:, :, self.kv_offset:self.kv_offset + incoming].copy_(new_v_cache)
+        self.k_cache[layer_idx][:, :, self.kv_offset:self.kv_offset + incoming].copy_(new_k_cache)
+        self.v_cache[layer_idx][:, :, self.kv_offset:self.kv_offset + incoming].copy_(new_v_cache)
 
         if layer_idx == self.num_layers - 1:
             self.kv_offset += incoming
             self.gen_offset += incoming
 
     def clear(self):
-        self.k_cache_cpu.zero_()
-        self.v_cache_cpu.zero_()
+        self.k_cache.zero_()
+        self.v_cache.zero_()
         self.k_landmark_max = []
         self.k_landmark_min = []
 
@@ -143,5 +147,12 @@ class QuestCache:
         self.prefill = 0
         self.gen_offset = 0
 
+        gc_and_sync()
+
     def get_kv_len(self):
         return self.kv_offset
+    
+    def H2D(self):
+        gc_and_sync()
+        self.k_cache = self.k_cache.to(self.device)
+        self.v_cache = self.v_cache.to(self.device)

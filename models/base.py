@@ -26,7 +26,11 @@ from tqdm import tqdm
 from flash_attn import flash_attn_with_kvcache
 
 from .tensor_op import sample_token, layer_norm, minference_prefill_kernel
-from .kvcache import KV_Cache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, ExperimentalKVCache_CPU, OptKVCache, QuestCache
+from .kvcache import FullKVCache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, OptKVCache, QuestCache
+from .logger import get_logger
+
+
+logger = get_logger(__name__)
 
 class LLM:
 
@@ -37,7 +41,7 @@ class LLM:
     # NOTE: register your kvcache method here
     def init_kv_cache(self, sparse_budget: int, rank: int, chunk_size: int, config):
         if self.attn_mode == 'full':
-            self.kv_cache = KV_Cache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size)
+            self.kv_cache = FullKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size)
         elif self.attn_mode.lower() == 'shadowkv':
             self.kv_cache = ShadowKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
         elif self.attn_mode.lower() == 'shadowkv_cpu':
@@ -46,8 +50,12 @@ class LLM:
             self.kv_cache = ExperimentalKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
         elif self.attn_mode.lower() == 'optimized':
             self.kv_cache = OptKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
+        elif self.attn_mode.lower() == 'quest':
+            self.kv_cache = QuestCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, chunk_size=chunk_size)
         else:
             raise ValueError(f"Invalid attention mode {self.attn_mode}")
+
+        logger.info(f"Using {self.kv_cache.__class__}")
 
     def print_kv_stats(self):
         self.kv_cache.print_stats()
@@ -123,7 +131,7 @@ class LLM:
             self.head_dim
         )
         
-        if isinstance(self.kv_cache, KV_Cache):
+        if isinstance(self.kv_cache, FullKVCache):
             query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
             key_states, value_states = self.kv_cache.update_kv_cache(key_states, value_states, layer_idx)
             
@@ -170,6 +178,18 @@ class LLM:
 
                 # flash attention
                 hidden_states = flash_attn_with_kvcache(q=query_states.transpose(1, 2), k_cache=key_states.transpose(1, 2), v_cache=value_states.transpose(1, 2), causal=True)
+
+        elif isinstance(self.kv_cache, QuestCache):
+            if q_len > 4*1024: # prefill
+                query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
+                self.kv_cache.prefill_kv_cache(key_states, value_states, layer_idx)
+                hidden_states = flash_attn_with_kvcache(q=query_states.transpose(1, 2), k_cache=key_states.transpose(1, 2), v_cache=value_states.transpose(1, 2), causal=True)
+            else: # decode
+                query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
+                self.kv_cache.update_kv_cache(key_states, value_states, layer_idx)
+                key_states, value_states = self.kv_cache.collect_kv(layer_idx=layer_idx, query_states=query_states)
+                hidden_states = flash_attn_with_kvcache(q=query_states.transpose(1, 2), k_cache=key_states.transpose(1, 2), v_cache=value_states.transpose(1, 2), causal=True)
+
 
         else:
             raise ValueError(f"Invalid attention mode {self.attn_mode}")

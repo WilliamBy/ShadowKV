@@ -2,12 +2,13 @@ import torch
 import math
 from torch import nn
 from models.logger import get_logger
+from models.kvcache.kv_base import KVCacheBase
 
 import torch.nn.functional as F
 
 logger = get_logger(__name__)
 
-class OptKVCache:
+class OptKVCache(KVCacheBase):
     """ShadowKV, only for accuracy measurement and understanding, not for efficiency, please refer to ShadowKV_CPU for the efficient implementation"""
     def __init__(self, 
         config :object,

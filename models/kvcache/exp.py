@@ -1,18 +1,19 @@
 import torch
 import math
 import gc
-from termcolor import colored
 from torch import nn
 from models.tensor_op import batch_gather_gemm_rotary_pos_emb_cuda, square_root_js_divergence
 from kernels import shadowkv
-from logging import getLogger
+from models.kvcache.kv_base import KVCacheBase
 
+from models.logger import get_logger
 
 import torch.nn.functional as F
 
-logger = getLogger(__name__)
 
-class ExperimentalKVCache:
+logger = get_logger(__name__)
+
+class ExperimentalKVCache(KVCacheBase):
     """ExperimentalKVCache, only for accuracy measurement and understanding, not for efficiency, please refer to ShadowKV_CPU for the efficient implementation"""
     def __init__(self, 
         config :object,

@@ -21,6 +21,7 @@ import random
 import numpy as np
 import json
 import os
+from math import inf
 
 # RULER
 from .metrics import needle_score, string_match_part, multi_number, multi_words
@@ -314,6 +315,9 @@ class Dataset:
             trunc_len = 0
             filter_cnt = 0  # Count filtered samples
 
+            sample_max_tokens = 0
+            sample_min_tokens = inf
+
             for i in range(self.num_samples):
                 sample = dataset[i]
                 
@@ -334,6 +338,8 @@ class Dataset:
                     trunc_len += tokenized_prompt.shape[-1] - self.datalen
                     tokenized_prompt = self.tokenizer.encode(prompt, return_tensors='pt')
                 tokenized_prompts.append(tokenized_prompt)
+                sample_max_tokens = max(sample_max_tokens, len(tokenized_prompt))
+                sample_min_tokens = min(sample_min_tokens, len(tokenized_prompt))
                 
                 # Extract answers (gt as list for multi-answer support)
                 answers = sample['answers'] if isinstance(sample['answers'], list) else [sample['answers']]
@@ -348,6 +354,7 @@ class Dataset:
             print(f"Filtered samples with < 4k tokens: {filter_cnt}")
             print(f"Truncated Prompt Count: {trunc_cnt}, Truncated Prompt Avg Length: {trunc_len / trunc_cnt if trunc_cnt > 0 else 0}")
             print(colored(f"Loaded {len(tokenized_prompts)} examples for LongBench task '{task_name}'", 'green'))
+            print(colored(f"max tokens: {sample_max_tokens}, min tokens: '{sample_min_tokens}'", 'green'))
             return tokenized_prompts, gts, all_classes_list
 
         elif 'infini_bench' in self.dataset_name: # infini_bench/xxx
