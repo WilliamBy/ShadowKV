@@ -26,11 +26,23 @@ from tqdm import tqdm
 from flash_attn import flash_attn_with_kvcache
 
 from .tensor_op import sample_token, layer_norm, minference_prefill_kernel
-from .kvcache import FullKVCache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, OptKVCache, QuestCache
-from .logger import get_logger
+from .kvcache import FullKVCache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, OptKVCache, QuestCache, TOVACache
+from .attention import full_attention, shadow_attention, quest_attention, tova_attention
+from utils.logger import get_logger
 
 
 logger = get_logger(__name__)
+
+# Attention method mapping
+attention_map = {
+    FullKVCache: full_attention,
+    ShadowKVCache: shadow_attention,
+    ShadowKVCache_CPU: shadow_attention,
+    OptKVCache: shadow_attention,
+    ExperimentalKVCache: shadow_attention,
+    QuestCache: quest_attention,
+    TOVACache: tova_attention,
+}
 
 class LLM:
 
@@ -52,6 +64,8 @@ class LLM:
             self.kv_cache = OptKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
         elif self.attn_mode.lower() == 'quest':
             self.kv_cache = QuestCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, chunk_size=chunk_size)
+        elif self.attn_mode.lower() == 'tova':
+            self.kv_cache = TOVACache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget)
         else:
             raise ValueError(f"Invalid attention mode {self.attn_mode}")
 
@@ -114,7 +128,6 @@ class LLM:
         return input_ids
 
     @torch.inference_mode()
-    # NOTE: adapt this method if using new kvcache
     def layer_compute(self, 
             buffer,
             layer_idx :int, 
@@ -131,68 +144,15 @@ class LLM:
             self.head_dim
         )
         
-        if isinstance(self.kv_cache, FullKVCache):
-            query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
-            key_states, value_states = self.kv_cache.update_kv_cache(key_states, value_states, layer_idx)
-            
-            if self.minference == True and q_len > 1:
-                    hidden_states = minference_prefill_kernel(query_states=query_states, key_states=key_states, value_states=value_states, minference_parttern=self.minference_parttern[layer_idx])
+        cache_type = type(self.kv_cache)
+        if cache_type in attention_map:
+            attention_handler = attention_map[cache_type]
+            if q_len > 1:
+                hidden_states = attention_handler.prefill(self, query_states, key_states, value_states, position_ids, layer_idx, self.kv_cache, self.minference, self.minference_parttern)
             else:
-                hidden_states = flash_attn_with_kvcache(q=query_states.transpose(1, 2), k_cache=key_states.transpose(1, 2), v_cache=value_states.transpose(1, 2), causal=True)
-
-        elif isinstance(self.kv_cache, ShadowKVCache) or isinstance(self.kv_cache, ShadowKVCache_CPU) or isinstance(self.kv_cache, OptKVCache) or isinstance(self.kv_cache, ExperimentalKVCache):
-
-            if q_len > 4*1024: # prefill
-                # svd unrope key and save
-                self.kv_cache.get_svd(key_states, layer_idx=layer_idx)
-                query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
-                self.kv_cache.prefill_kv_cache(value_states, layer_idx, key_states, query_states[:, :, -1:])
-                
-                if self.minference == True:
-                        hidden_states = minference_prefill_kernel(query_states=query_states, key_states=key_states, value_states=value_states, minference_parttern=self.minference_parttern[layer_idx])
-                else:
-                    hidden_states = flash_attn_with_kvcache(q=query_states.transpose(1, 2), k_cache=key_states.transpose(1, 2), v_cache=value_states.transpose(1, 2), causal=True)
-
-            else: # decode
-                # rope query and key
-                query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
-
-                # update kv cache to buffer
-                self.kv_cache.update_kv_cache(key_states, value_states, layer_idx)
-
-                # get retrieval idx
-                position_ids = self.kv_cache.get_retrieval_position_ids(layer_idx=layer_idx, query_states=query_states)
-
-                # multi-stream
-                curr_stream = torch.cuda.current_stream()
-                get_value_stream = self.kv_cache.copy_stream
-
-                with torch.cuda.stream(get_value_stream):
-                    get_value_stream.wait_stream(curr_stream)
-                    value_states = self.kv_cache.get_value_cache(layer_idx, position_ids)
-
-                # gather key cache from GPU and RoPE it (should be hide by CPU offloading time)
-                key_states = self.kv_cache.get_key_cache(layer_idx=layer_idx, position_ids=position_ids, rope_func=self.apply_rotary_pos_emb_single, cos_sin_cache=self.cos_sin_cache)
-
-                curr_stream.wait_stream(get_value_stream)
-
-                # flash attention
-                hidden_states = flash_attn_with_kvcache(q=query_states.transpose(1, 2), k_cache=key_states.transpose(1, 2), v_cache=value_states.transpose(1, 2), causal=True)
-
-        elif isinstance(self.kv_cache, QuestCache):
-            if q_len > 4*1024: # prefill
-                query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
-                self.kv_cache.prefill_kv_cache(key_states, value_states, layer_idx)
-                hidden_states = flash_attn_with_kvcache(q=query_states.transpose(1, 2), k_cache=key_states.transpose(1, 2), v_cache=value_states.transpose(1, 2), causal=True)
-            else: # decode
-                query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
-                self.kv_cache.update_kv_cache(key_states, value_states, layer_idx)
-                key_states, value_states = self.kv_cache.collect_kv(layer_idx=layer_idx, query_states=query_states)
-                hidden_states = flash_attn_with_kvcache(q=query_states.transpose(1, 2), k_cache=key_states.transpose(1, 2), v_cache=value_states.transpose(1, 2), causal=True)
-
-
+                hidden_states = attention_handler.decode(self, query_states, key_states, value_states, position_ids, layer_idx, self.kv_cache, self.minference, self.minference_parttern)
         else:
-            raise ValueError(f"Invalid attention mode {self.attn_mode}")
+            raise ValueError(f"No Attention Implementation for KV cache type: {cache_type}")
 
         hidden_states = hidden_states.reshape(bsz, q_len, self.hidden_size)
         

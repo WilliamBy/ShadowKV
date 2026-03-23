@@ -1,5 +1,5 @@
 [project]
-name = "shadowkv"
+name = "SparseDecoding"
 version = "0.1.0"
 description = "sparse decoding"
 readme = "README.md"
@@ -9,6 +9,8 @@ dependencies = [
     "datasets==2.20.0",
     "evaluate>=0.4.6",
     "flash-attn",
+    "flashinfer-cubin>=0.6.6",
+    "flashinfer-python>=0.6.6",
     "fuzzywuzzy>=0.18.0",
     "gcsfs>=2024.5.0",
     "huggingface-hub==0.23.3",
@@ -47,6 +49,8 @@ dependencies = [
 dev = [
     "debugpy>=1.8.19",
 ]
+
+[project.optional-dependencies]
 ruler = [
     "cython>=3.2.4",
     "nemo-toolkit[all]==1.23",
@@ -59,6 +63,7 @@ prerelease="allow"
 
 [tool.uv.extra-build-dependencies]
 youtokentome = ["Cython"]
+minference = ["torch"]
 
 [tool.uv.sources]
 flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.3cxx11abiFALSE-cp310-cp310-linux_x86_64.whl" }

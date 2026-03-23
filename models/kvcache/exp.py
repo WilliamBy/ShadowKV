@@ -4,9 +4,9 @@ import gc
 from torch import nn
 from models.tensor_op import batch_gather_gemm_rotary_pos_emb_cuda, square_root_js_divergence
 from kernels import shadowkv
-from models.kvcache.kv_base import KVCacheBase
+from models.kvcache.base import KVCacheBase
 
-from models.logger import get_logger
+from utils.logger import get_logger
 
 import torch.nn.functional as F
 

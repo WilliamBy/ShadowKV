@@ -1,7 +1,7 @@
 import torch
 import gc
 
-from .kv_base import KVCacheBase
+from .base import KVCacheBase
 
 
 class FullKVCache(KVCacheBase):

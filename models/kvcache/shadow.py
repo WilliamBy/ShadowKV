@@ -21,10 +21,8 @@ import gc
 from torch import nn
 from models.tensor_op import batch_gather_gemm_rotary_pos_emb_cuda
 from kernels import shadowkv
-from models.logger import get_logger
-from models.kvcache.kv_base import KVCacheBase
+from models.kvcache.base import KVCacheBase
 
-logger = get_logger(__name__)
 
 class ShadowKVCache(KVCacheBase):
     """ShadowKV, only for accuracy measurement and understanding, not for efficiency, please refer to ShadowKV_CPU for the efficient implementation"""
@@ -39,7 +37,6 @@ class ShadowKVCache(KVCacheBase):
         rank=160,
         ) -> None:
 
-        logger.info("initializing ShadowKVCache")
         
         self.config = config
         self.batch_size = batch_size

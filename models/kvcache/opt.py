@@ -1,8 +1,8 @@
 import torch
 import math
 from torch import nn
-from models.logger import get_logger
-from models.kvcache.kv_base import KVCacheBase
+from utils.logger import get_logger
+from models.kvcache.base import KVCacheBase
 
 import torch.nn.functional as F
 

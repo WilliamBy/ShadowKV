@@ -1,6 +1,6 @@
-from .kv_base import KVCacheBase
+from .base import KVCacheBase
 
-from .shadowkv import ShadowKVCache, ShadowKVCache_CPU
+from .shadow import ShadowKVCache, ShadowKVCache_CPU
 from .exp import ExperimentalKVCache, ExperimentalKVCache_CPU
 from .opt import OptKVCache
 from .quest import QuestCache

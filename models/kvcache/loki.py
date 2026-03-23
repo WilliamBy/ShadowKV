@@ -6,7 +6,7 @@ import torch
 from utils import gc_and_sync
 
 from models.tensor_op import repeat_kv
-from models.kvcache.kv_base import KVCacheBase
+from models.kvcache.base import KVCacheBase
 
 
 class LokiCache(KVCacheBase):
