@@ -112,7 +112,7 @@ class ShadowKVCache(KVCacheBase):
         self.copy_stream = torch.cuda.Stream()
 
     def print_stats(self):
-        print(f"ShadowKV | sparse budget {self.sparse_budget} | chunk size {self.chunk_size} | rank {self.rank} | cached {self.kv_offset} | local_chunk {self.local_chunk} | outlier_chunk {self.outlier_chunk}")
+        print(f"ShadowKV | maxlen {self.max_length} | sparse budget {self.sparse_budget} | chunk size {self.chunk_size} | rank {self.rank} | cached {self.kv_offset} | local_chunk {self.local_chunk} | outlier_chunk {self.outlier_chunk}")
 
     # NOTE: get compression matrix via SVD on context key cache
     def get_svd(self, new_k_cache, layer_idx):

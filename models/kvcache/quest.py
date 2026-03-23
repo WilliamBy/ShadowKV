@@ -36,17 +36,27 @@ class QuestCache(KVCacheBase):
             config.num_key_value_heads,
             self.max_length,
             self.config.hidden_size // self.config.num_attention_heads,
-            device="cpu",
+            device=self.device,
             dtype=self.dtype
         )
 
-        self.v_cache = torch.zeros(
+        self.v_cache_cpu = torch.zeros(
             config.num_hidden_layers,
             batch_size,
             config.num_key_value_heads,
             self.max_length,
             self.config.hidden_size // self.config.num_attention_heads,
-            device="cpu",
+            device='cpu',
+            dtype=self.dtype
+        )
+
+        self.v_cache_buffer = torch.zeros(
+            config.num_hidden_layers,
+            batch_size,
+            config.num_key_value_heads,
+            self.sparse_budget + 4096,
+            self.config.hidden_size // self.config.num_attention_heads,
+            device=self.device,
             dtype=self.dtype
         )
 
@@ -59,7 +69,7 @@ class QuestCache(KVCacheBase):
         self.k_landmark_min = []
 
     def print_stats(self):
-        print(f"QuestCache | sparse budget {self.sparse_budget} | chunk size {self.chunk_size} | cached {self.kv_offset}")
+        print(f"QuestCache | sparse budget {self.sparse_budget} | maxlen {self.max_length} | chunk size {self.chunk_size} | cached {self.kv_offset}")
 
     def register_k_landmark(self, k_landmark_max, k_landmark_min):
         self.k_landmark_max.append(k_landmark_max.clone())
@@ -74,7 +84,7 @@ class QuestCache(KVCacheBase):
         incoming = new_k_cache.shape[-2] # [bsz, num_kv_heads, incoming, head_dim]
         self.prefill = incoming
         
-        self.v_cache[layer_idx][:, :, :incoming] = new_v_cache.clone()
+        self.v_cache_cpu[layer_idx][:, :, :incoming] = new_v_cache.clone()
         self.k_cache[layer_idx][:, :, :incoming] = new_k_cache.clone()
 
         self.chunks = incoming // self.chunk_size - 32 // self.chunk_size
@@ -114,12 +124,12 @@ class QuestCache(KVCacheBase):
         position_ids = (topk_chunk.unsqueeze(-1) * self.chunk_size + torch.arange(self.chunk_size, device=topk_chunk.device).unsqueeze(0).unsqueeze(0).unsqueeze(0)).view(1, self.num_key_value_heads, -1) # [bsz, 8, select_sets * chunk_size]
 
         key_ = self.k_cache[layer_idx].gather(dim=-2, index=position_ids.unsqueeze(-1).expand(-1, -1, -1, self.head_dim))
-        value_ = self.v_cache[layer_idx].gather(dim=-2, index=position_ids.unsqueeze(-1).expand(-1, -1, -1, self.head_dim))
+        value_ = self.v_cache_cpu[layer_idx].gather(dim=-2, index=position_ids.unsqueeze(-1).expand(-1, -1, -1, self.head_dim).to('cpu'))
 
         gen_offset = self.gen_offset if layer_idx == self.num_layers - 1 else self.gen_offset + self.incoming_q_len
 
-        ret_k = torch.cat([key_, self.k_cache[layer_idx][:,:,self.chunk_end:self.prefill+gen_offset]], dim = 2)
-        ret_v = torch.cat([value_, self.v_cache[layer_idx][:,:,self.chunk_end:self.prefill+gen_offset]], dim = 2)
+        ret_k = torch.cat([key_, self.k_cache[layer_idx][:,:,self.chunk_end:self.prefill+gen_offset]], dim = 2).to(self.device)
+        ret_v = torch.cat([value_, self.v_cache_cpu[layer_idx][:,:,self.chunk_end:self.prefill+gen_offset]], dim = 2).to(self.device)
 
         return ret_k, ret_v
         
@@ -131,7 +141,7 @@ class QuestCache(KVCacheBase):
 
         incoming = new_k_cache.shape[-2]
         self.k_cache[layer_idx][:, :, self.kv_offset:self.kv_offset + incoming].copy_(new_k_cache)
-        self.v_cache[layer_idx][:, :, self.kv_offset:self.kv_offset + incoming].copy_(new_v_cache)
+        self.v_cache_cpu[layer_idx][:, :, self.kv_offset:self.kv_offset + incoming].copy_(new_v_cache)
 
         if layer_idx == self.num_layers - 1:
             self.kv_offset += incoming
@@ -139,7 +149,7 @@ class QuestCache(KVCacheBase):
 
     def clear(self):
         self.k_cache.zero_()
-        self.v_cache.zero_()
+        self.v_cache_cpu.zero_()
         self.k_landmark_max = []
         self.k_landmark_min = []
 
@@ -153,6 +163,4 @@ class QuestCache(KVCacheBase):
         return self.kv_offset
     
     def H2D(self):
-        gc_and_sync()
-        self.k_cache = self.k_cache.to(self.device)
-        self.v_cache = self.v_cache.to(self.device)
+        pass
