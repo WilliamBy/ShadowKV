@@ -73,7 +73,7 @@ class TOVACache(KVCacheBase):
         
         self.layer_seq_len[layer_idx] = incoming
 
-    def collect_kv(self, layer_idx: int, query_states: torch.Tensor):
+    def collect_kv(self, layer_idx: int):
         """
         Unlike Quest, TOVA doesn't perform pre-attention heuristic retrieval. 
         It returns all CURRENTLY valid cached KV pairs for precise attention calculation.

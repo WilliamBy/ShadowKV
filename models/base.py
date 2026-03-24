@@ -21,27 +21,28 @@ import torch
 import torch.nn.functional as F
 import time
 import gc
+from typing import Dict
 from tqdm import tqdm
 
 from flash_attn import flash_attn_with_kvcache
 
 from .tensor_op import sample_token, layer_norm, minference_prefill_kernel
-from .kvcache import FullKVCache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, OptKVCache, QuestCache, TOVACache
-from .attention import full_attention, shadow_attention, quest_attention, tova_attention
+from .kvcache import FullKVCache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, OptKVCache, QuestCache, TOVACache, KVCacheBase
+from .attention import FullAttention, ShadowAttention, TovaAttention, QuestAttention, AttentionBase
 from utils.logger import get_logger
 
 
 logger = get_logger(__name__)
 
 # Attention method mapping
-attention_map = {
-    FullKVCache: full_attention,
-    ShadowKVCache: shadow_attention,
-    ShadowKVCache_CPU: shadow_attention,
-    OptKVCache: shadow_attention,
-    ExperimentalKVCache: shadow_attention,
-    QuestCache: quest_attention,
-    TOVACache: tova_attention,
+attention_map: Dict[KVCacheBase, AttentionBase] = {
+    FullKVCache: FullAttention,
+    ShadowKVCache: ShadowAttention,
+    ShadowKVCache_CPU: ShadowAttention,
+    OptKVCache: ShadowAttention,
+    ExperimentalKVCache: ShadowAttention,
+    QuestCache: QuestAttention,
+    TOVACache: TovaAttention,
 }
 
 class LLM:
@@ -69,7 +70,10 @@ class LLM:
         else:
             raise ValueError(f"Invalid attention mode {self.attn_mode}")
 
-        logger.info(f"Using {self.kv_cache.__class__}")
+        cache_type = type(self.kv_cache)
+        self.attn_hdlr = attention_map[cache_type](self.kv_cache, self.num_key_value_groups, self.head_dim, self.hidden_size, self.apply_rotary_pos_emb, self.apply_rotary_pos_emb_single, self.cos_sin_cache)
+
+        logger.info(f"Using {self.kv_cache.__class__} & {self.attn_hdlr.__class__}")
 
     def print_kv_stats(self):
         self.kv_cache.print_stats()
@@ -144,15 +148,16 @@ class LLM:
             self.head_dim
         )
         
-        cache_type = type(self.kv_cache)
-        if cache_type in attention_map:
-            attention_handler = attention_map[cache_type]
-            if q_len > 1:
-                hidden_states = attention_handler.prefill(self, query_states, key_states, value_states, position_ids, layer_idx, self.kv_cache, self.minference, self.minference_parttern)
-            else:
-                hidden_states = attention_handler.decode(self, query_states, key_states, value_states, position_ids, layer_idx, self.kv_cache, self.minference, self.minference_parttern)
-        else:
-            raise ValueError(f"No Attention Implementation for KV cache type: {cache_type}")
+        attn_hdlr = self.attn_hdlr 
+
+        if self.minference:
+            attn_hdlr.minference = self.minference_prefill_kernel
+            attn_hdlr.minference_parttern = self.minference_parttern
+
+        if q_len > 1: # prefill
+            hidden_states = attn_hdlr.prefill(query_states, key_states, value_states, position_ids, layer_idx)
+        else: # decoding
+            hidden_states = attn_hdlr.decode(query_states, key_states, value_states, position_ids, layer_idx)
 
         hidden_states = hidden_states.reshape(bsz, q_len, self.hidden_size)
         

@@ -6,6 +6,7 @@ from .opt import OptKVCache
 from .quest import QuestCache
 from .full import FullKVCache
 from .loki import LokiCache
+from .tova import TOVACache
 
 method2kvcache = {
     "full": FullKVCache,
@@ -15,5 +16,6 @@ method2kvcache = {
     "experimental_cpu": ExperimentalKVCache_CPU,
     "optimized": OptKVCache,
     "quest": QuestCache,
-    "loki": LokiCache
+    "loki": LokiCache,
+    "tova": TOVACache
 }

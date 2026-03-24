@@ -338,8 +338,8 @@ class Dataset:
                     trunc_len += tokenized_prompt.shape[-1] - self.datalen
                     tokenized_prompt = self.tokenizer.encode(prompt, return_tensors='pt')
                 tokenized_prompts.append(tokenized_prompt)
-                sample_max_tokens = max(sample_max_tokens, len(tokenized_prompt))
-                sample_min_tokens = min(sample_min_tokens, len(tokenized_prompt))
+                sample_max_tokens = max(sample_max_tokens, tokenized_prompt.size(-1))
+                sample_min_tokens = min(sample_min_tokens, tokenized_prompt.size(-1))
                 
                 # Extract answers (gt as list for multi-answer support)
                 answers = sample['answers'] if isinstance(sample['answers'], list) else [sample['answers']]

@@ -22,7 +22,7 @@ class ExperimentalKVCache(KVCacheBase):
         device :str = 'cuda:0',
         dtype = torch.bfloat16,
         sparse_budget: int = 2048,
-        chunk_size=4,
+        chunk_size=8,
         rank=160,
         ) -> None:
 

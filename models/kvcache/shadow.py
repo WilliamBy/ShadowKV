@@ -114,12 +114,15 @@ class ShadowKVCache(KVCacheBase):
     # NOTE: get compression matrix via SVD on context key cache
     def get_svd(self, new_k_cache, layer_idx):
         # [bsz, 8, prefill, 128] OR [bsz, prefill, 1024]
-        if new_k_cache.shape[1] <= 32:
+        if new_k_cache.size() == 4:
             # [bsz, 8, prefill, 128] --> [bsz, prefill, 1024]
             k_cache = new_k_cache.transpose(1, 2).reshape(self.batch_size, -1, self.num_key_value_heads*self.head_dim)
         else:
             # [bsz, prefill, 1024]
             k_cache = new_k_cache
+
+        slen = k_cache.size(-2)
+        assert slen >= self.rank, "Sequence length smaller than rank"
         
         if layer_idx == 0:
             # init U, SV
@@ -263,7 +266,6 @@ class ShadowKVCache(KVCacheBase):
 
         incoming = new_k_cache.shape[-2]
 
-        # FIXME
         target_shape = self.v_cache_buffer[layer_idx][:, :, self.sparse_end+self.gen_offset:self.sparse_end+self.gen_offset+incoming].shape
         source_shape = new_v_cache.shape
         assert target_shape == source_shape, f"{target_shape}, {source_shape}, {self.sparse_end}"
@@ -309,7 +311,6 @@ class ShadowKVCache_CPU(KVCacheBase):
         rank=160,
         ) -> None:
 
-        logger.info("initializing ShadowKVCache_CPU")
         
         self.config = config
         self.batch_size = batch_size
