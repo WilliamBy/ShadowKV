@@ -80,7 +80,7 @@ class StreamingKVCache(KVCacheBase):
             return torch.cat([
                 self.v_cache_buffer[layer_idx][:, :, :self.sink_size],
                 self.v_cache_buffer[layer_idx][:, :, -self.local_window_size:]
-            ])
+            ], dim=2)
 
         return self.v_cache_buffer[layer_idx][:, :, :self.kv_offset]
 
@@ -88,8 +88,8 @@ class StreamingKVCache(KVCacheBase):
         if self.kv_offset > self.sparse_budget:
             return torch.cat([
                 self.k_cache_buffer[layer_idx][:, :, :self.sink_size],
-                self.k_cache_buffer[layer_idx][:, :, -self.local_window_size:]
-            ])
+                self.k_cache_buffer[layer_idx][:, :, -self.local_window_size:],
+            ], dim=2)
 
         return self.k_cache_buffer[layer_idx][:, :, :self.kv_offset]
 
