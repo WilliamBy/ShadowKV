@@ -65,7 +65,7 @@ class LLM:
         elif self.attn_mode.lower() == 'optimized':
             self.kv_cache = OptKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
         elif self.attn_mode.lower() == 'streaming':
-            self.kv_cache = StreamingKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sink_size=4, local_window_size=sparse_budget)
+            self.kv_cache = StreamingKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sink_size=4, sparse_budget=sparse_budget)
         elif self.attn_mode.lower() == 'quest':
             self.kv_cache = QuestCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, chunk_size=chunk_size)
         elif self.attn_mode.lower() == 'tova':

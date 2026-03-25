@@ -15,7 +15,7 @@ class StreamingKVCache(KVCacheBase):
         device='cuda:0',
         dtype=torch.bfloat16,
         sink_size=4,
-        local_window_size=512,
+        sparse_budget=512,
     ):
         self.config = config
         self.batch_size = batch_size
@@ -28,7 +28,7 @@ class StreamingKVCache(KVCacheBase):
         self.num_key_value_heads = config.num_key_value_heads
 
         self.sink_size = sink_size
-        self.local_window_size = local_window_size
+        self.local_window_size = sparse_budget
 
         self.k_cache_buffer = torch.zeros(
             config.num_hidden_layers,
@@ -52,7 +52,7 @@ class StreamingKVCache(KVCacheBase):
 
         self.num_layers = config.num_hidden_layers
         self.kv_offset = 0
-        self.sparse_budget = sink_size + local_window_size
+        self.sparse_budget = sparse_budget
 
     def print_stats(self):
         print(
