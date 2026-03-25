@@ -4,7 +4,6 @@ from ..kvcache import StreamingKVCache
 
 class StreamingAttention(AttentionBase):
     def prefill(self, query_states, key_states, value_states, position_ids, layer_idx):
-        assert isinstance(StreamingKVCache)
         kv_cache = self.kv_cache
         query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
         kv_cache.prefill_kv_cache(value_states, layer_idx, key_states)
@@ -22,7 +21,6 @@ class StreamingAttention(AttentionBase):
         return hidden_states
 
     def decode(self, query_states, key_states, value_states, position_ids, layer_idx):
-        assert isinstance(StreamingKVCache)
         query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
 
         kv_cache = self.kv_cache
