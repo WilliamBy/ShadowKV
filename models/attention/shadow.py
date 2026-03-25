@@ -6,7 +6,6 @@ from models.kvcache.shadow import ShadowKVCache
 class ShadowAttention(AttentionBase):
 
     def prefill(self, query_states, key_states, value_states, position_ids, layer_idx):
-        assert isinstance(self.kv_cache, ShadowKVCache)
         kv_cache = self.kv_cache
         # svd unrope key and save
         kv_cache.get_svd(key_states, layer_idx=layer_idx)
@@ -22,7 +21,6 @@ class ShadowAttention(AttentionBase):
 
     def decode(self, query_states, key_states, value_states, position_ids, layer_idx):
         kv_cache = self.kv_cache 
-        assert isinstance(kv_cache, ShadowKVCache)
             
         # rope query and key
         query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)

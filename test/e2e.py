@@ -57,8 +57,8 @@ configs = {
         "60k": {
             "sparse_budget": 1024,
             "min_prompt_len": 1024*60,
-            "baseline_bsz": 1,
-            "shadowkv_bsz": 1,
+            "baseline_bsz": 3,
+            "shadowkv_bsz": 3,
         },
         "122k": {
             "sparse_budget": 2048,
@@ -143,6 +143,7 @@ def parse_args() -> Namespace:
     p.add_argument("--datalen", type=str, default="122k",
                    choices=["12k", "44k", "28k", "60k", "122k", "244k"])
     p.add_argument("--device", type=int, default="0", help="gpu device to use")
+    p.add_argument("--method", type=str, default="shadowkv_cpu", help="kvcache method")
 
     return p.parse_args()
 
@@ -179,7 +180,7 @@ if __name__ == '__main__':
     torch.cuda.reset_peak_memory_stats(llm.device)
     start_time_baseline = time.time()
     _, throughput_baseline, generated_tokens_baseline = llm.batch_generate(
-        input_ids.to(llm.device), gen_len=100, benchmark=True, temperature=temperature)
+        input_ids.to(llm.device), gen_len=1024, benchmark=True, temperature=temperature)
     end_time_baseline = time.time()
     torch.cuda.synchronize(llm.device)
     peak_mem_baseline = torch.cuda.max_memory_allocated(
@@ -214,7 +215,7 @@ if __name__ == '__main__':
     ##################### ShadowKV #####################
 
     llm = LLM(model_name=model_name, device='cuda:0',  batch_size=shadowkv_bsz,
-              max_length=min_prompt_len, attn_mode='shadowkv_cpu', sparse_budget=sparse_budget)
+              max_length=min_prompt_len, attn_mode=args.method, sparse_budget=sparse_budget)
     torch.cuda.synchronize(llm.device)
     mem_after_load_shadowkv = torch.cuda.memory_allocated(
         llm.device) / (1024 ** 3)
@@ -226,7 +227,7 @@ if __name__ == '__main__':
     torch.cuda.reset_peak_memory_stats(llm.device)
     start_time_shadowkv = time.time()
     _, throughput_shadowkv, generated_tokens_shadowkv = llm.batch_generate(
-        input_ids.to(llm.device), gen_len=100, benchmark=True, temperature=temperature)
+        input_ids.to(llm.device), gen_len=1024, benchmark=True, temperature=temperature)
     end_time_shadowkv = time.time()
     torch.cuda.synchronize(llm.device)
     peak_mem_shadowkv = torch.cuda.max_memory_allocated(
@@ -237,19 +238,19 @@ if __name__ == '__main__':
     mem_per_batch_shadowkv = mem_increment_shadowkv / shadowkv_bsz
     mem_per_token_shadowkv = mem_increment_shadowkv / total_tokens_shadowkv
     print(colored(
-        f"[ShadowKV] Memory after model loading on {llm.device}: {mem_after_load_shadowkv:.2f} GB", 'cyan'))
+        f"[{args.method}] Memory after model loading on {llm.device}: {mem_after_load_shadowkv:.2f} GB", 'cyan'))
     print(
-        colored(f"[ShadowKV] Throughput: {throughput_shadowkv} tokens/s", 'red'))
+        colored(f"[{args.method}] Throughput: {throughput_shadowkv} tokens/s", 'red'))
     print(colored(
-        f"[ShadowKV] Peak CUDA memory on {llm.device}: {peak_mem_shadowkv:.2f} GB", 'yellow'))
+        f"[{args.method}] Peak CUDA memory on {llm.device}: {peak_mem_shadowkv:.2f} GB", 'yellow'))
     print(colored(
-        f"[ShadowKV] Memory increment: {mem_increment_shadowkv:.2f} GB", 'yellow'))
+        f"[{args.method}] Memory increment: {mem_increment_shadowkv:.2f} GB", 'yellow'))
     print(colored(
-        f"[ShadowKV] Memory per batch: {mem_per_batch_shadowkv:.2f} GB", 'yellow'))
+        f"[{args.method}] Memory per batch: {mem_per_batch_shadowkv:.2f} GB", 'yellow'))
     print(colored(
-        f"[ShadowKV] Memory per token: {mem_per_token_shadowkv:.4f} GB", 'yellow'))
+        f"[{args.method}] Memory per token: {mem_per_token_shadowkv:.4f} GB", 'yellow'))
     print(colored(
-        f"[ShadowKV] Elapsed time: {end_time_shadowkv - start_time_shadowkv:.3f} s", 'yellow'))
+        f"[{args.method}] Elapsed time: {end_time_shadowkv - start_time_shadowkv:.3f} s", 'yellow'))
 
     print(
         colored(f"Speedup: {throughput_shadowkv / throughput_baseline:.2f}x", 'red'))
