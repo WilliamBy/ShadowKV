@@ -65,12 +65,12 @@ class StreamingKVCache(KVCacheBase):
         self.v_cache_buffer[layer_idx][:, :, :incoming].copy_(new_v_cache)
         self.kv_offset = incoming
 
-    def update_kv_cache(self, new_v_cache: torch.Tensor, layer_idx: int, new_rope_key_states: torch.Tensor):
-        incoming = new_rope_key_states.size(-2)
+    def update_kv_cache(self, new_k_cache: torch.Tensor, new_v_cache: torch.Tensor, layer_idx: int):
+        incoming = new_k_cache.size(-2)
         if self.kv_offset + incoming > self.max_length:
             raise ValueError("No Sufficient KVCache Buffer to Allocate")
 
-        self.k_cache_buffer[layer_idx][:, :, self.kv_offset:self.kv_offset+incoming].copy_(new_rope_key_states)
+        self.k_cache_buffer[layer_idx][:, :, self.kv_offset:self.kv_offset+incoming].copy_(new_k_cache)
         self.k_cache_buffer[layer_idx][:, :, self.kv_offset:self.kv_offset+incoming].copy_(new_v_cache)
 
         self.kv_offset += incoming
