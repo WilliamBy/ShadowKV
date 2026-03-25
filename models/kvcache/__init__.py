@@ -3,6 +3,7 @@ from .base import KVCacheBase
 from .shadow import ShadowKVCache, ShadowKVCache_CPU
 from .exp import ExperimentalKVCache, ExperimentalKVCache_CPU
 from .opt import OptKVCache
+from .streaming import StreamingKVCache
 from .quest import QuestCache
 from .full import FullKVCache
 from .loki import LokiCache
@@ -15,6 +16,7 @@ method2kvcache = {
     "experimental": ExperimentalKVCache,
     "experimental_cpu": ExperimentalKVCache_CPU,
     "optimized": OptKVCache,
+    "streaming": StreamingKVCache,
     "quest": QuestCache,
     "loki": LokiCache,
     "tova": TOVACache

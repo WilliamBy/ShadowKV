@@ -27,8 +27,8 @@ from tqdm import tqdm
 from flash_attn import flash_attn_with_kvcache
 
 from .tensor_op import sample_token, layer_norm, minference_prefill_kernel
-from .kvcache import FullKVCache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, OptKVCache, QuestCache, TOVACache, KVCacheBase
-from .attention import FullAttention, ShadowAttention, TovaAttention, QuestAttention, AttentionBase
+from .kvcache import FullKVCache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, OptKVCache, QuestCache, TOVACache, KVCacheBase, StreamingKVCache
+from .attention import FullAttention, ShadowAttention, TovaAttention, QuestAttention, StreamingAttention, AttentionBase
 from utils.logger import get_logger
 
 
@@ -43,6 +43,7 @@ attention_map: Dict[KVCacheBase, AttentionBase] = {
     ExperimentalKVCache: ShadowAttention,
     QuestCache: QuestAttention,
     TOVACache: TovaAttention,
+    StreamingKVCache: StreamingAttention
 }
 
 class LLM:
@@ -63,6 +64,8 @@ class LLM:
             self.kv_cache = ExperimentalKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
         elif self.attn_mode.lower() == 'optimized':
             self.kv_cache = OptKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size)
+        elif self.attn_mode.lower() == 'streaming':
+            self.kv_cache = StreamingKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sink_size=4, local_window_size=sparse_budget)
         elif self.attn_mode.lower() == 'quest':
             self.kv_cache = QuestCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, chunk_size=chunk_size)
         elif self.attn_mode.lower() == 'tova':
