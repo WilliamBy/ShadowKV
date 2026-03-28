@@ -31,5 +31,5 @@ class KVCacheBase(ABC):
 
     @abstractmethod
     def get_kv_len(self):
-        """Get current kvcache pool length"""
+        """Get current kvcache pool length (context length)"""
         pass

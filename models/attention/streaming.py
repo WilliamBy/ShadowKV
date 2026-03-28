@@ -6,7 +6,7 @@ class StreamingAttention(AttentionBase):
     def prefill(self, query_states, key_states, value_states, position_ids, layer_idx):
         kv_cache = self.kv_cache
         query_states, key_states = self.apply_rotary_pos_emb(query_states, key_states, position_ids)
-        kv_cache.prefill_kv_cache(value_states, layer_idx, key_states)
+        kv_cache.update_kv_cache(key_states, value_states, layer_idx)
 
         if self.minference:
             hidden_states = self.minference_prefill_kernel(query_states=query_states, key_states=key_states, value_states=value_states, minference_parttern=self.minference_parttern[layer_idx])

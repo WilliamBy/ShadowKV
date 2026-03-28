@@ -59,21 +59,16 @@ class StreamingKVCache(KVCacheBase):
             f"StreamingKVCache | sparse budget {self.sparse_budget} | max_len {self.max_length} | sink_size {self.sink_size} | local_window_size {self.local_window_size} | kv_offset {self.kv_offset}"
         )
 
-    def prefill_kv_cache(self, new_v_cache: torch.Tensor, layer_idx: int, new_rope_key_states: torch.Tensor):
-        incoming = new_v_cache.shape[-2]
-        self.k_cache_buffer[layer_idx][:, :, :incoming].copy_(new_rope_key_states)
-        self.v_cache_buffer[layer_idx][:, :, :incoming].copy_(new_v_cache)
-        self.kv_offset = incoming
-
     def update_kv_cache(self, new_k_cache: torch.Tensor, new_v_cache: torch.Tensor, layer_idx: int):
         incoming = new_k_cache.size(-2)
         if self.kv_offset + incoming > self.max_length:
-            raise ValueError("No Sufficient KVCache Buffer to Allocate")
+            raise ValueError(f"No Sufficient KVCache Buffer to Allocate: max allowed {self.max_length}, allocated {self.kv_offset}, incoming {incoming}")
 
         self.k_cache_buffer[layer_idx][:, :, self.kv_offset:self.kv_offset+incoming].copy_(new_k_cache)
-        self.k_cache_buffer[layer_idx][:, :, self.kv_offset:self.kv_offset+incoming].copy_(new_v_cache)
+        self.v_cache_buffer[layer_idx][:, :, self.kv_offset:self.kv_offset+incoming].copy_(new_v_cache)
 
-        self.kv_offset += incoming
+        if layer_idx == self.num_layers - 1:
+            self.kv_offset += incoming
 
     def get_value_cache(self, layer_idx):
         if self.kv_offset > self.sparse_budget:
