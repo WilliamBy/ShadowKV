@@ -53,9 +53,10 @@ dev = [
 [project.optional-dependencies]
 ruler = [
     "cython>=3.2.4",
-    "nemo-toolkit[all]==1.23",
+    "nemo-toolkit[all]==1.23.0",
     "wheel>=0.46.3",
     "youtokentome>=1.0.6",
+    "onnx==1.18.0",
 ]
 
 [tool.uv]
