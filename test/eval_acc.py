@@ -77,6 +77,7 @@ def parse_args() -> Namespace:
     p.add_argument("--rank", type=int, default=160)
     p.add_argument("--chunk_size", type=int, default=8)
     p.add_argument("--minference", action='store_true', default=False)
+    p.add_argument("--dynamic_ratio", type=float, default=1)
 
     return p.parse_args()
 
@@ -107,7 +108,7 @@ if __name__ == '__main__':
     
     LLM = choose_model_class(model_name)
 
-    llm = LLM(model_name=model_name, batch_size=batch_size, device=dist_config.device, max_length=datalen+2048, attn_mode=args.method, dtype=dtype, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size, minference=minference)
+    llm = LLM(model_name=model_name, batch_size=batch_size, device=dist_config.device, max_length=datalen+2048, attn_mode=args.method, dtype=dtype, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size, minference=minference, dynamic_ratio=args.dynamic_ratio)
 
     if dist_config.master_process:
         llm.print_kv_stats()

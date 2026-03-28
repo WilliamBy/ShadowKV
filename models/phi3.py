@@ -80,7 +80,8 @@ class Phi3(LLM):
         sparse_budget: int = 2048,
         rank=160,
         chunk_size=8,
-        minference=False) -> None:
+        minference=False,
+        **kwargs) -> None:
         
         assert batch_size == 1, "Batch size must be 1"
         self.batch_size = batch_size
@@ -104,11 +105,12 @@ class Phi3(LLM):
         self.init_parameters(hf_model)
         self.attn_mode = attn_mode
         self.minference = minference
+        self.extra_kwargs = kwargs
 
         self.ctx_template = Templates['phi']
         self.chat_template = Chat_Templates['phi']
 
-        self.init_kv_cache(sparse_budget, rank, chunk_size, self.config)
+        self.init_kv_cache(sparse_budget, rank, chunk_size, self.config, **self.extra_kwargs)
 
     def _set_cos_sin_cache(self, hf_model):
         dummy_x = torch.tensor(1.0, device=self.device).to(self.dtype)

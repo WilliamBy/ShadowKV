@@ -96,7 +96,8 @@ class GLM(LLM):
         sparse_budget: int = 2048,
         rank=160,
         chunk_size=8,
-        minference=False) -> None:
+        minference=False,
+        **kwargs) -> None:
         
         self.batch_size = batch_size
         self.device = device
@@ -118,6 +119,7 @@ class GLM(LLM):
         self.init_parameters(hf_model)
         self.attn_mode = attn_mode
         self.minference = minference
+        self.extra_kwargs = kwargs
 
         self.ctx_template = Templates['glm']
         self.chat_template = Chat_Templates['glm']
@@ -125,7 +127,7 @@ class GLM(LLM):
 
         self.vocab_size = self.config.vocab_size
 
-        self.init_kv_cache(sparse_budget, rank, chunk_size, GLMConfig(self.config))
+        self.init_kv_cache(sparse_budget, rank, chunk_size, GLMConfig(self.config), **self.extra_kwargs)
 
     def _set_cos_sin_cache(self, hf_model):
         return hf_model.transformer.rotary_pos_emb(self.max_length + 1024).to(self.device).transpose(-1, -2).contiguous().view(-1, 64)

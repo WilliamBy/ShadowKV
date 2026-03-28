@@ -90,7 +90,8 @@ class Llama(LLM):
         sparse_budget: int = 2048,
         rank=160,
         chunk_size=8,
-        minference=False) -> None:
+        minference=False,
+        **kwargs) -> None:
         
         # assert batch_size == 1, "Batch size must be 1"
         self.batch_size = batch_size
@@ -112,6 +113,7 @@ class Llama(LLM):
         self.init_parameters()
         self.attn_mode = attn_mode
         self.minference = minference
+        self.extra_kwargs = kwargs
 
         if 'llama-3' in model_name.lower():
             self.ctx_template = Templates['llama-3']
@@ -124,7 +126,7 @@ class Llama(LLM):
         else:
             raise ValueError(f"Invalid model name {model_name}")
 
-        self.init_kv_cache(sparse_budget, rank, chunk_size, self.config)
+        self.init_kv_cache(sparse_budget, rank, chunk_size, self.config, **self.extra_kwargs)
 
         if self.minference:
                 import json

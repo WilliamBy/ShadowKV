@@ -8,6 +8,7 @@ from .quest import QuestCache
 from .full import FullKVCache
 from .loki import LokiCache
 from .tova import TOVACache
+from .key_heuristic import LocalDivCache
 
 method2kvcache = {
     "full": FullKVCache,
@@ -19,5 +20,6 @@ method2kvcache = {
     "streaming": StreamingKVCache,
     "quest": QuestCache,
     "loki": LokiCache,
-    "tova": TOVACache
+    "tova": TOVACache,
+    "local_div": LocalDivCache
 }

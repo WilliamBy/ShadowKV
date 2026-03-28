@@ -21,30 +21,14 @@ import torch
 import torch.nn.functional as F
 import time
 import gc
-from typing import Dict
 from tqdm import tqdm
 
-from flash_attn import flash_attn_with_kvcache
-
-from .tensor_op import sample_token, layer_norm, minference_prefill_kernel
-from .kvcache import FullKVCache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, OptKVCache, QuestCache, TOVACache, KVCacheBase, StreamingKVCache
-from .attention import FullAttention, ShadowAttention, TovaAttention, QuestAttention, StreamingAttention, AttentionBase
+from .tensor_op import sample_token, layer_norm
+from .kvcache import *
+from .attention import Cache2Attn
 from utils.logger import get_logger
 
-
 logger = get_logger(__name__)
-
-# Attention method mapping
-attention_map: Dict[KVCacheBase, AttentionBase] = {
-    FullKVCache: FullAttention,
-    ShadowKVCache: ShadowAttention,
-    ShadowKVCache_CPU: ShadowAttention,
-    OptKVCache: ShadowAttention,
-    ExperimentalKVCache: ShadowAttention,
-    QuestCache: QuestAttention,
-    TOVACache: TovaAttention,
-    StreamingKVCache: StreamingAttention
-}
 
 class LLM:
 
@@ -53,7 +37,7 @@ class LLM:
         return f"LLM: {self.model_name}, attn_mode: {self.attn_mode}, max_length: {self.max_length}, batch_size: {self.batch_size}, device: {self.device}, dtype: {self.dtype}, GPU mem: {gpu_mem}"
 
     # NOTE: register your kvcache method here
-    def init_kv_cache(self, sparse_budget: int, rank: int, chunk_size: int, config):
+    def init_kv_cache(self, sparse_budget: int, rank: int, chunk_size: int, config, **kwargs):
         if self.attn_mode == 'full':
             self.kv_cache = FullKVCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size)
         elif self.attn_mode.lower() == 'shadowkv':
@@ -70,13 +54,17 @@ class LLM:
             self.kv_cache = QuestCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, chunk_size=chunk_size)
         elif self.attn_mode.lower() == 'tova':
             self.kv_cache = TOVACache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget)
+        elif self.attn_mode.lower() == 'local_div':
+            if "dynamic_ratio" not in kwargs:
+                raise ValueError("Need dynamic_ratio param!")
+            self.kv_cache = LocalDivCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size, dynamic_ratio=kwargs["dynamic_ratio"])
         else:
             raise ValueError(f"Invalid attention mode {self.attn_mode}")
 
         cache_type = type(self.kv_cache)
-        self.attn_hdlr = attention_map[cache_type](self.kv_cache, self.num_key_value_groups, self.head_dim, self.hidden_size, self.apply_rotary_pos_emb, self.apply_rotary_pos_emb_single, self.cos_sin_cache)
+        self.attn_hdlr = Cache2Attn[cache_type](self.kv_cache, self.num_key_value_groups, self.head_dim, self.hidden_size, self.apply_rotary_pos_emb, self.apply_rotary_pos_emb_single, self.cos_sin_cache)
 
-        logger.info(f"Using {self.kv_cache.__class__} & {self.attn_hdlr.__class__}")
+        logger.info(f"Using KVCache Type: {self.kv_cache.__class__.__name__}\n Using Attention Type: {self.attn_hdlr.__class__.__name__}")
 
     def print_kv_stats(self):
         self.kv_cache.print_stats()

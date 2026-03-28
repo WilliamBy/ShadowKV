@@ -103,7 +103,8 @@ class Qwen2(LLM):
         sparse_budget: int = 2048,
         rank=160,
         chunk_size=8,
-        minference=False) -> None:
+        minference=False,
+        **kwargs) -> None:
         
         assert batch_size == 1, "Batch size must be 1"
         self.batch_size = batch_size
@@ -124,11 +125,12 @@ class Qwen2(LLM):
         self.init_parameters()
         self.attn_mode = attn_mode
         self.minference = minference
+        self.extra_kwargs = kwargs
 
         self.ctx_template = Templates['qwen']
         self.chat_template = Chat_Templates['qwen']
 
-        self.init_kv_cache(sparse_budget, rank, chunk_size, self.config)
+        self.init_kv_cache(sparse_budget, rank, chunk_size, self.config, **self.extra_kwargs)
 
     def _set_cos_sin_cache(self, inv_freq: torch.Tensor):
         t = torch.arange(self.max_length, device=self.device, dtype=torch.int64).type_as(inv_freq)
