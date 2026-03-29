@@ -8,7 +8,7 @@ from .quest import QuestCache
 from .full import FullKVCache
 from .loki import LokiCache
 from .tova import TOVACache
-from .key_heuristic import LocalDivCache
+from .key_heuristic import LocalDivCache, RandomOutlierCache
 
 method2kvcache = {
     "full": FullKVCache,
@@ -21,5 +21,6 @@ method2kvcache = {
     "quest": QuestCache,
     "loki": LokiCache,
     "tova": TOVACache,
-    "local_div": LocalDivCache
+    "local_div": LocalDivCache,
+    "random_outlier": RandomOutlierCache
 }

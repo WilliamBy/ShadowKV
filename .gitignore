@@ -9,3 +9,6 @@ build/
 *.xz
 *.tar
 *.zip
+.vscode/
+.venv/
+archive/

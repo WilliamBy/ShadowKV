@@ -36,7 +36,7 @@ class LocalDivCache(KVCacheBase):
         self.dynamic_ratio = dynamic_ratio
         self.local_chunk = 4
 
-        assert self.batch_size == 1, "LocalDivCache class only supports batch_size=1"
+        assert self.batch_size == 1, f"{self.__class__.__name__} only supports batch_size=1"
 
         self.v_cache_cpu = torch.zeros(
             config.num_hidden_layers,
@@ -163,12 +163,9 @@ class LocalDivCache(KVCacheBase):
         key_states_roped_ctx = key_states_roped[:,:,:self.chunks*self.chunk_size].view(self.batch_size, self.num_key_value_heads, self.chunks, self.chunk_size, self.head_dim)
         landmark_candidates = key_states_roped_ctx.mean(dim=-2) # [bsz, kv_heads, chunks, head_dim]
 
-        # compute the JS divergence between the landmark_candidates and the key_states_roped in local
         j1 = F.softmax(landmark_candidates, dim=-1)
         j2 = F.softmax(key_states_roped[:,:, -self.chunks:], dim=-1)
         local_div = square_root_js_divergence(j1, j2)
-       
-        # select topk small div since these landmarks are neighbor to local key which may gain critical message
         outlier_chunk_idx = local_div.topk(self.static_chunks, largest=False).indices
         
         # [bsz, kv_heads, chunks, chunk_size, head_dim] --gather[bsz, kv_heads, outlier_chunk]-->[bsz, kv_heads, outlier_chunk, chunk_size, head_dim]
@@ -291,3 +288,61 @@ class LocalDivCache(KVCacheBase):
     def get_kv_len(self):
         return self.kv_offset
 
+
+class RandomOutlierCache(LocalDivCache):
+    def print_stats(self):
+        print(f"RandomOutlierCache | maxlen {self.max_length} | sparse budget {self.sparse_budget} | chunk size {self.chunk_size} | rank {self.rank} | local_chunk {self.local_chunk} | dynamic chunks {self.dynamic_chunks} | static chunks {self.static_chunks} | cached {self.kv_offset}")
+
+    def prefill_kv_cache(self,
+            new_v_cache :torch.Tensor,
+            layer_idx :int,
+            key_states_roped: torch.Tensor,
+            query: torch.Tensor=None
+            ):
+        
+        incoming = new_v_cache.shape[-2] # [bsz, num_kv_heads, incoming, head_dim]
+        self.prefill = incoming
+        self.v_cache_cpu[layer_idx][:, :, :incoming] = new_v_cache.clone()
+
+        # [x0, x1, ...., self.chunks*chunk_size, local_chunk, rest]
+        self.chunks = incoming // self.chunk_size - self.local_chunk 
+
+        # store Post-RoPE k cache <prefill_local> to the cache
+        self.prefill_local = incoming - self.chunks * self.chunk_size # local chunks + align to chunk_size
+        self.k_cache_buffer[layer_idx][:, :, :self.prefill_local].copy_(key_states_roped[:, :, -self.prefill_local:])
+        self.v_cache_buffer[layer_idx][:, :, :self.prefill_local].copy_(new_v_cache[:, :, -self.prefill_local:])
+
+        key_states_roped_ctx = key_states_roped[:,:,:self.chunks*self.chunk_size].view(self.batch_size, self.num_key_value_heads, self.chunks, self.chunk_size, self.head_dim)
+        landmark_candidates = key_states_roped_ctx.mean(dim=-2) # [bsz, kv_heads, chunks, head_dim]
+
+        # NOTE: Randomly select outlier chunks
+        outlier_chunk_idx = torch.stack([torch.randperm(self.chunks, device=self.device) 
+                             for _ in range(self.batch_size * self.num_key_value_heads)]).view(self.batch_size, self.num_key_value_heads, self.chunks)[:, :, :self.static_chunks]
+    
+    
+        # [bsz, kv_heads, chunks, chunk_size, head_dim] --gather[bsz, kv_heads, outlier_chunk]-->[bsz, kv_heads, outlier_chunk, chunk_size, head_dim]
+        outlier_chunk_k_cache = key_states_roped_ctx.gather(dim=2, index=outlier_chunk_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, self.chunk_size, self.head_dim)).view(self.batch_size, self.num_key_value_heads, self.static_chunks*self.chunk_size, self.head_dim)
+        
+        outlier_chunk_v_cache = new_v_cache[:,:,:self.chunks*self.chunk_size].view(self.batch_size, self.num_key_value_heads, self.chunks, self.chunk_size, self.head_dim).gather(dim=2, index=outlier_chunk_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, self.chunk_size, self.head_dim)).view(self.batch_size, self.num_key_value_heads, self.static_chunks*self.chunk_size, self.head_dim)
+
+        self.dynamic_start = self.prefill_local + self.static_chunks * self.chunk_size
+        self.dynamic_end = self.dynamic_start + self.dynamic_chunks * self.chunk_size
+        
+        # store outlier_chunk to the cache
+        self.k_cache_buffer[layer_idx][:, :, self.prefill_local:self.dynamic_start].copy_(outlier_chunk_k_cache)
+        self.v_cache_buffer[layer_idx][:, :, self.prefill_local:self.dynamic_start].copy_(outlier_chunk_v_cache)
+
+        # filter landmark_candidates using outlier_chunk and register the rest to k_landmark
+        # [bsz, kv_heads, chunks, head_dim] --> [bsz, kv_heads, chunks - outlier_chunk, head_dim]
+        # get rest_idx: [bsz, kv_heads, chunks] --filter--> [bsz, kv_heads, chunks - outlier_chunk]
+        all_idx = torch.arange(self.chunks, device=key_states_roped.device).unsqueeze(0).unsqueeze(0).expand(self.batch_size, self.num_key_value_heads, -1) # [bsz, kv_heads, chunks]
+        mask = torch.ones_like(all_idx, dtype=torch.bool)
+        mask.scatter_(dim=-1, index=outlier_chunk_idx, value=False)
+        rest_idx = all_idx.masked_select(mask).view(self.batch_size, self.num_key_value_heads, -1)
+
+        # register rest_idxed landmarks to k_landmark
+        self.register_k_landmark(landmark_candidates.gather(dim=2, index=rest_idx.unsqueeze(-1).expand(-1, -1, -1, self.head_dim)).view(self.batch_size, self.num_key_value_heads, -1, self.head_dim), rest_idx, layer_idx)
+
+        if layer_idx == self.num_layers - 1:
+            assert self.sparse_budget < incoming
+            self.kv_offset += incoming

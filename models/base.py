@@ -55,9 +55,11 @@ class LLM:
         elif self.attn_mode.lower() == 'tova':
             self.kv_cache = TOVACache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget)
         elif self.attn_mode.lower() == 'local_div':
-            if "dynamic_ratio" not in kwargs:
-                raise ValueError("Need dynamic_ratio param!")
-            self.kv_cache = LocalDivCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size, dynamic_ratio=kwargs["dynamic_ratio"])
+            dynamic_ratio = kwargs.get("dynamic_ratio", 0)
+            self.kv_cache = LocalDivCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size, dynamic_ratio=dynamic_ratio)
+        elif self.attn_mode.lower() == 'random_outlier':
+            dynamic_ratio = kwargs.get("dynamic_ratio", 0)
+            self.kv_cache = RandomOutlierCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size, dynamic_ratio=dynamic_ratio)
         else:
             raise ValueError(f"Invalid attention mode {self.attn_mode}")
 

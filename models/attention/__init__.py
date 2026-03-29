@@ -7,7 +7,7 @@ from .quest import QuestAttention
 from .tova import TovaAttention
 from .base import AttentionBase
 
-from ..kvcache import FullKVCache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, OptKVCache, QuestCache, TOVACache, KVCacheBase, StreamingKVCache, LocalDivCache
+from ..kvcache import FullKVCache, ShadowKVCache, ShadowKVCache_CPU, ExperimentalKVCache, OptKVCache, QuestCache, TOVACache, KVCacheBase, StreamingKVCache, LocalDivCache, RandomOutlierCache
 
 # Attention method mapping
 Cache2Attn: Dict[KVCacheBase, AttentionBase] = {
@@ -19,5 +19,6 @@ Cache2Attn: Dict[KVCacheBase, AttentionBase] = {
     QuestCache: QuestAttention,
     TOVACache: TovaAttention,
     StreamingKVCache: StreamingAttention,
-    LocalDivCache: ShadowAttention
+    LocalDivCache: ShadowAttention,
+    RandomOutlierCache: ShadowAttention
 }
