@@ -7,14 +7,14 @@ from tqdm import tqdm
 from datasets import load_dataset
 import numpy as np
 import random
-from requests.exceptions import ProxyError, SSLError
-from eval.util import parse_common_args, build_chat, load_model_and_tokenizer, get_out_path, sample_token
-try:
-    import torch_npu
-    use_npu = True
-except ImportError:
-    use_npu = False
-    pass
+
+
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+from models import choose_model_class
+from models.base import LLM
+
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -26,17 +26,90 @@ def seed_everything(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def load_model_with_retry(model_path, args, retries=3, delay=1):
-    for attempt in range(retries):
-        try:
-            model, tokenizer, step_updater, eos_token_ids, config = load_model_and_tokenizer(model_path, args)
-            return model, tokenizer, step_updater, eos_token_ids, config
-        except (ProxyError, SSLError) as e:
-            print(f"Attempt {attempt + 1} failed due to network error: {e}")
-            if attempt < retries - 1:
-                time.sleep(delay)  # Wait before retrying
-            else:
-                raise  # Re-raise the last exception if all retries fail
+def parse_common_args(parser):
+    """Parse common arguments for model loading and evaluation."""
+    parser.add_argument("--model_name", type=str, default=None, help="Model name")
+    parser.add_argument("--dataset", type=str, default=None, help="Dataset name")
+    parser.add_argument("--max_gen", type=int, default=2048, help="Max generation length")
+    parser.add_argument("--temperature", type=float, default=0.0, help="Temperature for sampling")
+    parser.add_argument("--top_p", type=float, default=1.0, help="Top-p for sampling")
+    parser.add_argument("--data_from", type=int, default=None, help="Start index for data")
+    parser.add_argument("--data_idx", type=int, default=None, help="Specific data index")
+    parser.add_argument("--data_idx_to", type=int, default=None, help="End index for data")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--attn_mode", type=str, default="full", help="Attention mode")
+    parser.add_argument("--sparse_budget", type=int, default=4096, help="Sparse budget for KV cache")
+    parser.add_argument("--rank", type=int, default=32, help="Rank for compression")
+    parser.add_argument("--chunk_size", type=int, default=128, help="Chunk size")
+    parser.add_argument("--output_dir", type=str, default="archive/reasoning", help="Output directory")
+    return parser
+
+
+def build_chat(tokenizer, prompt, model_name):
+    """Build chat prompt for specific models."""
+    if "llama-2" in model_name.lower():
+        prompt = f"[INST]{prompt}[/INST]"
+    elif "llama-3" in model_name.lower():
+        # Llama-3 uses chat template by default
+        pass
+    return prompt
+
+
+def load_model_and_tokenizer(model_path, args):
+    """Load model and tokenizer using project's LLM interface."""
+    tokenizer = None  # Will be set by LLM class
+    step_updater = None  # Not used in LLM interface
+    eos_token_ids = None  # Will be set by LLM class
+    config = {"model_path": model_path}
+    
+    # Load LLM implementation
+    LLMClass = choose_model_class(model_path)
+    print(f"Loading model: {model_path}")
+    print(f"Using LLM class: {LLMClass.__name__}")
+    
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    model = LLMClass(
+        model_name=model_path,
+        batch_size=args.batch_size,
+        device=device,
+        max_length=128000,  # Large enough for reasoning tasks
+        attn_mode=args.attn_mode,
+        dtype=torch.bfloat16,
+        sparse_budget=args.sparse_budget,
+        rank=args.rank,
+        chunk_size=args.chunk_size,
+    )
+    
+    # Extract tokenizer and eos_token_ids from model
+    tokenizer = model.tokenizer
+    eos_token_ids = [tokenizer.eos_token_id] if tokenizer.eos_token_id is not None else []
+    
+    # Add special EOS tokens for specific models
+    if "llama" in model_path.lower():
+        eos_token_ids.extend([tokenizer.convert_tokens_to_ids("<|eot_id|>")])
+    elif "glm" in model_path.lower():
+        eos_token_ids.extend([151329, 151336, 151338])
+    elif "phi" in model_path.lower():
+        eos_token_ids.extend([tokenizer.convert_tokens_to_ids("<|end|>")])
+    
+    return model, tokenizer, step_updater, eos_token_ids, config
+
+
+def get_out_path(args, config):
+    """Generate output path for predictions."""
+    model_name = args.model_name.split('/')[-1]
+    method_name = args.attn_mode
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    filename = f"{args.dataset}-{model_name}-{method_name}.jsonl"
+    out_path = os.path.join(args.output_dir, filename)
+    
+    # Clear the file if it exists
+    open(out_path, 'w').close()
+    
+    return out_path
 
 
 def parse_args(args=None):
@@ -46,7 +119,7 @@ def parse_args(args=None):
 
 
 def get_pred(
-    model,
+    model: LLM,
     tokenizer,
     eos_token_ids,
     data,
@@ -60,230 +133,174 @@ def get_pred(
     step_updater,
     out_path
 ):
+    """
+    Generate predictions using LLM interface (single sample at a time).
+    
+    Note: step_updater parameter is kept for compatibility but not used.
+    """
     preds = []
     for di, json_obj in enumerate(tqdm(data)):
         prompt = prompt_format.format(**json_obj)
-        tokenized_prompt = tokenizer(
-            prompt, truncation=False, return_tensors="pt"
-        ).input_ids[0]
-        if len(tokenized_prompt) > max_length:
-            assert False
         
-        # print(prompt)
+        # Tokenize and check length
+        tokenized_prompt = tokenizer(prompt, truncation=False, return_tensors="pt").input_ids[0]
+        if len(tokenized_prompt) > max_length:
+            print(f"Warning: prompt length {len(tokenized_prompt)} exceeds max_length {max_length}")
+            # Truncate to fit
+            half = int(max_length / 2)
+            prompt = tokenizer.decode(tokenized_prompt[:half], skip_special_tokens=True) + \
+                    tokenizer.decode(tokenized_prompt[-half:], skip_special_tokens=True)
+            tokenized_prompt = tokenizer(prompt, truncation=False, return_tensors="pt").input_ids[0]
+        
+        # Apply chat template if needed
         chat_prompt = build_chat(tokenizer, prompt, model_name)
-        # print(chat_prompt)
-        if isinstance(chat_prompt, str):
-            input = tokenizer(chat_prompt, truncation=False, return_tensors="pt").to(
-                "cuda" if not use_npu else "npu"
-            ).input_ids
-        else:
-            input = chat_prompt
-        with torch.no_grad():
-            if step_updater is not None:
-                step_updater.reset(input)
-            output = model(
-                input_ids=input,
-                past_key_values=None,
-                use_cache=True,
-            )
-            past_key_values = output.past_key_values
-            pred_token_idx = sample_token(output, temperature, top_p)
-            generated_content = [pred_token_idx.item()]
-            if step_updater is not None:
-                step_updater.update(pred_token_idx.item())
-
-            # st = time.time()
-            for gen_iter in range(max_gen - 1):
-                outputs = model(
-                    input_ids=pred_token_idx,
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                )
-                past_key_values = outputs.past_key_values
-                pred_token_idx = sample_token(outputs, temperature, top_p)
-                pred_token_idx_int = pred_token_idx.item()
-                generated_content += [pred_token_idx_int]
-                if step_updater is not None:
-                    step_updater.update(pred_token_idx_int)
-                if pred_token_idx_int in eos_token_ids:
-                    break
-            # cost = time.time() - st
-            # print(f"{max_gen} tokens use {cost:.2f}s, tbt {cost / max_gen * 1000:.2f} ms")
-        stat = {}
-        if step_updater is not None:
-            stat.update(step_updater.finish())
-        pred = tokenizer.decode(generated_content, skip_special_tokens=True)
-        # print(pred)
-        preds.append(
-            {
-                "qid": di + (args.data_from or 0),
-                "input:": prompt,
-                "pred": pred,
-                "answer": json_obj[answer_field_id],
-                "input_len": len(input[0]),
-                "output_len": len(generated_content),
-                **stat
-            }
+        input_ids = tokenizer.encode(chat_prompt, return_tensors="pt", add_special_tokens=False).to(model.device)
+        
+        # Generate using LLM interface
+        outputs = model.generate(
+            input_ids=input_ids,
+            gen_len=max_gen,
+            temperature=temperature,
+            top_p=top_p,
+            verbose=False,
+            benchmark=False
         )
+        
+        pred = outputs[0] if isinstance(outputs, list) else outputs
+        
+        pred_entry = {
+            "qid": di + (args.data_from or 0),
+            "input": prompt,
+            "pred": pred,
+            "answer": json_obj[answer_field_id],
+            "input_len": input_ids.shape[1],
+            "output_len": len(tokenizer.encode(pred)),
+        }
+        
+        preds.append(pred_entry)
+        
+        # Write to file incrementally
         with open(out_path, "a", encoding="utf-8") as f:
-            json.dump(preds[-1], f, ensure_ascii=False)
+            json.dump(pred_entry, f, ensure_ascii=False)
             f.write("\n")
+    
     return preds
 
 
 def get_pred_batched(
-    model,
+    model: LLM,
     tokenizer,
-    eos_token_ids, # Can be a list of token IDs
+    eos_token_ids,
     data,
     answer_field_id,
-    max_gen,    # Max tokens to generate
+    max_gen,
     prompt_format,
     model_name,
     temperature,
     top_p,
-    step_updater, # NOTE: step_updater logic will be complex with batching if not designed for it
+    step_updater,
     out_path,
     batch_size,
 ):
-    device = next(model.parameters()).device
+    """
+    Generate predictions using LLM interface with batching.
+    
+    Note: step_updater parameter is kept for compatibility but not used.
+    """
     preds_all = []
-    # Ensure eos_token_ids is a tensor on the correct device for efficient checking
-    if isinstance(eos_token_ids, int):
-        eos_token_ids = [eos_token_ids]
-
+    
+    # Process in batches
     for i in tqdm(range(0, len(data), batch_size), desc="Processing batches"):
-        batch_json_objs = data.select(range(i, i+batch_size))
+        batch_json_objs = data.select(range(i, min(i+batch_size, len(data))))
         current_batch_size = len(batch_json_objs)
-
+        
+        # Format prompts
         batch_prompts_text = [prompt_format.format(**json_obj) for json_obj in batch_json_objs]
         batch_chat_prompts_text = [
             build_chat(tokenizer, p_text, model_name) for p_text in batch_prompts_text
         ]
         
-        inputs = tokenizer(
-            batch_chat_prompts_text,
-            return_tensors="pt",
-            padding=True, # Pad to the longest sequence in the batch
-            truncation=False,
-        ).to(device)
-
-        input_ids = inputs.input_ids
-        attention_mask = inputs.attention_mask  # padding mask
+        # Tokenize all prompts
+        input_ids_list = []
+        max_len = 0
+        for chat_prompt in batch_chat_prompts_text:
+            tokens = tokenizer.encode(chat_prompt, return_tensors="pt", add_special_tokens=False)
+            input_ids_list.append(tokens)
+            max_len = max(max_len, tokens.shape[1])
         
-        assert input_ids.shape[1] > 0
-
-        # Initialize for generation
-        generated_tokens_batch = [[] for _ in range(current_batch_size)]
-        # Keep track of active sequences (not yet finished by EOS)
-        active_sequences = torch.ones(current_batch_size, dtype=torch.bool, device=device)
+        # Pad to same length
+        padded_inputs = []
+        for tokens in input_ids_list:
+            if tokens.shape[1] < max_len:
+                pad_len = max_len - tokens.shape[1]
+                padded = torch.nn.functional.pad(tokens, (0, pad_len), value=tokenizer.pad_token_id or tokenizer.eos_token_id)
+                padded_inputs.append(padded)
+            else:
+                padded_inputs.append(tokens)
         
-        # Store past_key_values
-        past_key_values = None
-
-        # Perform initial forward pass (prefill)
-        with torch.no_grad():
-            if current_batch_size > 0 : # Ensure there's something to process
-                if step_updater:
-                    step_updater.reset(input_ids) 
-                outputs = model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    past_key_values=None,
-                    use_cache=True,
-                )
-                past_key_values = outputs.past_key_values
-                next_tokens = sample_token(outputs, temperature, top_p) # [batch_size, 1]
-
-                # Add first generated token
-                for k in range(current_batch_size):
-                    if active_sequences[k]:
-                        token_int = next_tokens[k, 0].item()
-                        generated_tokens_batch[k].append(token_int)
-                        if token_int in eos_token_ids:
-                            active_sequences[k] = False
-                if step_updater is not None:
-                    step_updater.update(next_tokens)
-                
-        # Autoregressive generation loop
-        for gen_iter in range(max_gen - 1):
-            if not torch.any(active_sequences): # Stop if all sequences are done
-                break
-
-            with torch.no_grad():
-                # [batch_size, 1]
-                current_input_ids = next_tokens
-                effective_attention_mask = active_sequences.unsqueeze(-1).expand_as(current_input_ids)
-                attention_mask = torch.cat([attention_mask, effective_attention_mask], dim=-1)
-                outputs = model(
-                    input_ids=current_input_ids, # Should be shape [batch_size, 1]
-                    attention_mask=attention_mask,
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                )
-                past_key_values = outputs.past_key_values
-                next_tokens = sample_token(outputs, temperature, top_p)
-
-                # Update generated tokens and active status
-                for k in range(current_batch_size):
-                    if active_sequences[k]:
-                        token_int = next_tokens[k, 0].item()
-                        generated_tokens_batch[k].append(token_int)
-                        if token_int in eos_token_ids:
-                            active_sequences[k] = False
-                if step_updater is not None:
-                    step_updater.update(next_tokens)
+        # Stack into batch
+        batch_input_ids = torch.cat(padded_inputs, dim=0).to(model.device)
         
-        # Decode and store predictions for the batch
+        # Generate using LLM batch_generate
+        outputs = model.batch_generate(
+            input_ids=batch_input_ids,
+            gen_len=max_gen,
+            temperature=temperature,
+            top_p=top_p,
+            verbose=False,
+            benchmark=False
+        )
+        
+        # Process outputs
         for k in range(current_batch_size):
             json_obj = batch_json_objs[k]
-            original_prompt_text = batch_prompts_text[k] # Text before build_chat
-            pred_text = tokenizer.decode(generated_tokens_batch[k], skip_special_tokens=True)
+            original_prompt_text = batch_prompts_text[k]
+            chat_prompt_text = batch_chat_prompts_text[k]
+            pred_text = outputs[k] if isinstance(outputs, list) else outputs
             
-            stat = {}
-            if step_updater is not None:
-                stat.update(step_updater.finish())
-
             pred_entry = {
-                "qid": i + k, # Global index
-                "input:": original_prompt_text, # Original prompt before chat formatting
-                "chat_input:": batch_chat_prompts_text[k], # What was actually tokenized as model input
+                "qid": i + k,
+                "input": original_prompt_text,
+                "chat_input": chat_prompt_text,
                 "pred": pred_text,
                 "answer": json_obj[answer_field_id],
-                "input_len": len(input_ids[k]), # Length of tokenized chat_input
-                "output_len": len(generated_tokens_batch[k]),
-                **stat
+                "input_len": input_ids_list[k].shape[1],
+                "output_len": len(tokenizer.encode(pred_text)),
             }
             preds_all.append(pred_entry)
+            
+            # Write to file incrementally
             with open(out_path, "a", encoding="utf-8") as f:
                 json.dump(pred_entry, f, ensure_ascii=False)
                 f.write("\n")
-                
+    
     return preds_all
 
 
 if __name__ == "__main__":
     args = parse_args()
     seed_everything(args.seed)
-    _config_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'config')
+    
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    _config_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config')
     model2path = json.load(open(os.path.join(_config_dir, 'model2path.json'), "r"))
     model2maxlen = json.load(open(os.path.join(_config_dir, 'model2maxlen.json'), "r"))
-    device_list = ([i for i in range(torch.cuda.device_count())] if not use_npu else
-                   [i for i in range(torch.npu.device_count())])
-    model_name = args.model
-    assert model_name in model2path and "Not allowed model"
-
-    model, tokenizer, step_updater, eos_token_ids, config = load_model_with_retry(model2path[model_name], args)
-    # do not use together with `device_map="auto"`
-    # only enable_pp can be used for qwen models
-    # model = to_device(model, device_list, enable_pp=True)
-
-    max_length = model2maxlen[model_name]
+    
+    model_name = args.model_name
+    assert model_name in model2path, f"Model {model_name} not found in model2path.json"
+    
+    # Load model using project's LLM interface
+    model, tokenizer, step_updater, eos_token_ids, config = load_model_and_tokenizer(
+        model2path[model_name], args
+    )
+    
+    max_length = model2maxlen[model_name.split('/')[-1]]
     max_gen = args.max_gen
-
+    
     dataset = args.dataset
-    ds_dir = "eval/o1/datasets"
+    ds_dir = "data/reasoning/datasets"
     answer_field_id = "answer"
+    
     if dataset == "AIME":
         ds_path = f"{ds_dir}/aime.jsonl"
     elif dataset == "AIME24":
@@ -299,19 +316,24 @@ if __name__ == "__main__":
         answer_field_id = "Correct Answer"
     elif dataset == "GPQA50c":
         ds_path = f"{ds_dir}/gpqa50c.jsonl"
+        answer_field_id = "Correct Answer"
     elif dataset == "MATH500":
         ds_path = f"{ds_dir}/math500.jsonl"
     elif dataset == "MATH50":
         ds_path = f"{ds_dir}/math50.jsonl"
     else:
         raise ValueError(f"Unknown dataset {dataset}")
+    
     data = load_dataset("json", data_files=ds_path, split="train")
     
-    dataset2prompt = json.load(open("eval/o1/config/dataset2prompt.json", "r"))
+    dataset2prompt = json.load(open(os.path.join(_config_dir, "dataset2prompt.json"), "r"))
     prompt_format = dataset2prompt[dataset]
+    
+    # Add chain-of-thought template if specified
     if "cot" in model_name:
         prompt_format += "<Thought> {thought} </Thought>\n"
     
+    # Filter data based on arguments
     if args.data_idx is not None:
         data = data.select(range(args.data_idx, args.data_idx+1))
     elif args.data_idx_to is not None:
@@ -320,6 +342,16 @@ if __name__ == "__main__":
         data = data.select(range(args.data_from, len(data)))
     
     out_path = get_out_path(args, config)
+    
+    print(f"Model: {model_name}")
+    print(f"Dataset: {dataset}")
+    print(f"Max length: {max_length}")
+    print(f"Max generation: {max_gen}")
+    print(f"Batch size: {args.batch_size}")
+    print(f"Output path: {out_path}")
+    print(f"Attn mode: {args.attn_mode}")
+    print("-" * 80)
+    
     if args.batch_size == 1:
         preds = get_pred(
             model,
@@ -352,3 +384,6 @@ if __name__ == "__main__":
             out_path,
             args.batch_size,
         )
+    
+    print(f"\nCompleted! Processed {len(preds)} samples.")
+    print(f"Results saved to: {out_path}")

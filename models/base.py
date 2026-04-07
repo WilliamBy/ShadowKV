@@ -60,6 +60,10 @@ class LLM:
         elif self.attn_mode.lower() == 'random_outlier':
             dynamic_ratio = kwargs.get("dynamic_ratio", 0)
             self.kv_cache = RandomOutlierCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget, rank=rank, chunk_size=chunk_size, dynamic_ratio=dynamic_ratio)
+        elif self.attn_mode.lower() == 'oracle_topk':
+            self.kv_cache = OracleTopkCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, sparse_budget=sparse_budget)
+        elif self.attn_mode.lower() == 'sparq':
+            self.kv_cache = SparQCache(config, max_length=self.max_length, device=self.device, dtype=self.dtype, batch_size=self.batch_size, r=rank, k=sparse_budget)
         else:
             raise ValueError(f"Invalid attention mode {self.attn_mode}")
 

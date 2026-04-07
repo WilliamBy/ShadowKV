@@ -36,7 +36,7 @@ class OptKVCache(ShadowKVCache):
         self.sparse_budget = int(sparse_budget)
         self.chunk_size = chunk_size
         self.rank = rank
-        self.local_chunk = 8
+        self.local_chunk = 0
         self.outlier_chunk = 48
 
         assert self.batch_size == 1, "ShadowKV class only supports batch_size=1, please use ShadowKV_CPU class for batch_size > 1"
@@ -69,7 +69,7 @@ class OptKVCache(ShadowKVCache):
             config.num_hidden_layers,
             batch_size,
             config.num_key_value_heads,
-            self.sparse_budget + 4096,
+            self.sparse_budget + (self.outlier_chunk+self.local_chunk)*self.chunk_size + 4096,
             self.config.hidden_size // self.config.num_attention_heads,
             device=self.device,
             dtype=self.dtype
@@ -79,7 +79,7 @@ class OptKVCache(ShadowKVCache):
             config.num_hidden_layers,
             batch_size,
             config.num_key_value_heads,
-            self.sparse_budget + 4096,
+            self.sparse_budget + (self.outlier_chunk+self.local_chunk)*self.chunk_size + 4096,
             self.config.hidden_size // self.config.num_attention_heads,
             device=self.device,
             dtype=self.dtype
@@ -100,7 +100,7 @@ class OptKVCache(ShadowKVCache):
         self.sink_size = 4
 
     def print_stats(self):
-        print(f"OptimizedKVCache | sparse budget {self.sparse_budget} | chunk size {self.chunk_size} |rank {self.rank} | cached {self.kv_offset} | local_chunk {self.local_chunk} | outlier_chunk {self.outlier_chunk} | sink_size {self.sink_size}")
+        print(f"OptimizedKVCache | sparse budget {self.sparse_budget} | chunk size {self.chunk_size} | rank {self.rank} | cached {self.kv_offset} | local_chunk {self.local_chunk} | outlier_chunk {self.outlier_chunk} | sink_size {self.sink_size}")
 
     def get_svd(self, new_k_cache, layer_idx):
         # [bsz, 8, prefill, 128] OR [bsz, prefill, 1024]

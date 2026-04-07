@@ -28,7 +28,7 @@ def get_trimmed_average(data_list):
     average = trimmed_sum / trimmed_len
     return round(average, 2)
     
-def get_result(path):
+def get_result(path, max_length, loose=False):
     data_list = []
     with open(path, "r", encoding='utf-8') as f:
         for line in f:
@@ -48,9 +48,13 @@ def get_result(path):
     for pid, example in enumerate(data_list):
         output_len = example["output_len"]
         pred = example["pred"]
-        num_correction = np.array(example["num_correct"])
-        correction_rate = np.mean( num_correction / output_len )
-        correction_rate_list.append(correction_rate)
+        
+        # Handle num_correction if it exists (for backward compatibility)
+        if "num_correct" in example:
+            num_correction = np.array(example["num_correct"])
+            correction_rate = np.mean(num_correction / output_len)
+            correction_rate_list.append(correction_rate)
+        
         answer = str(example["answer"])
         # Avoid dismatch pred
         start_index = pred.find("**Final Answer**")
@@ -61,7 +65,7 @@ def get_result(path):
             output_lens_fin.append(output_len)
             if "num_split_out_win" in example:
                 num_split_out_win_fin.append(example["num_split_out_win"])
-        if args.loose:
+        if loose:
             start_index = 0     # do not check **Final Answer**
         if start_index != -1:
             pred = pred[start_index:]
@@ -102,7 +106,7 @@ if __name__ == "__main__":
     # load the result
     data_dir = args.data_dir
     max_length = args.max_length
-    model_name = args.model_name
+    model_name = args.model_name.split('/')[-1]
     
     all_results = dict()
     all_corrects = dict()
@@ -123,7 +127,8 @@ if __name__ == "__main__":
             id_no_seed = id.split("-seed")[0]
             acc, avg_len, avg_len_fin, corrects, data_list_len, \
             avg_num_split_out_win, avg_num_split_out_win_fin, mean_correction_rate = \
-                get_result(os.path.join(data_dir, method_dir, data_file))
+                get_result(os.path.join(data_dir, method_dir, data_file), max_length, args.loose)
+
 
             if not dataset in all_results:
                 all_results[dataset] = {}
